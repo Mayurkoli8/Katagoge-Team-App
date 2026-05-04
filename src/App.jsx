@@ -518,8 +518,8 @@ function Login({ authError, setAuthError }) {
     setLoading(true);
     try {
       // Pre-flight: only send a code if this email is registered as an active member.
-      // This prevents wasting auth-email rate limits on strangers and stops Supabase
-      // from creating orphan auth users for emails that aren't authorized.
+      // This stops strangers from getting OTP emails and prevents Supabase from
+      // burning rate limits on unauthorized requests.
       const allowed = await auth.isEmailRegistered(email);
       if (!allowed) {
         setErr('This email is not registered. Ask a founder to invite you first.');
@@ -529,16 +529,7 @@ function Login({ authError, setAuthError }) {
       await auth.sendOtp(email);
       setStep('otp');
     } catch (e) {
-      const msg = e?.message || 'Could not send code. Try again.';
-      // Common Supabase error: "Signups not allowed for otp" appears when
-      // shouldCreateUser is false and the email has no auth user yet.
-      // This shouldn't happen anymore because of the trigger that creates auth
-      // users for invited profiles, but if it does, give a useful hint.
-      if (/signups? not allowed/i.test(msg)) {
-        setErr('This email is registered but not yet linked to an auth account. Contact a founder to re-invite you.');
-      } else {
-        setErr(msg);
-      }
+      setErr(e?.message || 'Could not send code. Try again.');
     } finally {
       setLoading(false);
     }

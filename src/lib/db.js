@@ -228,11 +228,11 @@ export const auth = {
     const { error } = await supabase.auth.signInWithOtp({
       email: email.trim().toLowerCase(),
       options: {
-        // Critical: don't auto-create auth users for unknown emails.
-        // The client also pre-checks via isEmailRegistered, this is the
-        // server-side enforcement so even a malicious client can't
-        // pollute auth.users with strangers.
-        shouldCreateUser: false,
+        // We let Supabase create the auth user on first verify. Strangers are
+        // blocked client-side by isEmailRegistered() before this is called.
+        // This is the original, working pattern — patch-010 cleaned up the
+        // malformed auth users that earlier patches accidentally created.
+        shouldCreateUser: true,
       },
     });
     if (error) throw error;
