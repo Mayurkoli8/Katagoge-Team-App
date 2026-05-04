@@ -517,10 +517,28 @@ function Login({ authError, setAuthError }) {
     }
     setLoading(true);
     try {
+      // Pre-flight: only send a code if this email is registered as an active member.
+      // This prevents wasting auth-email rate limits on strangers and stops Supabase
+      // from creating orphan auth users for emails that aren't authorized.
+      const allowed = await auth.isEmailRegistered(email);
+      if (!allowed) {
+        setErr('This email is not registered. Ask a founder to invite you first.');
+        setLoading(false);
+        return;
+      }
       await auth.sendOtp(email);
       setStep('otp');
     } catch (e) {
-      setErr(e.message || 'Could not send code. Try again.');
+      const msg = e?.message || 'Could not send code. Try again.';
+      // Common Supabase error: "Signups not allowed for otp" appears when
+      // shouldCreateUser is false and the email has no auth user yet.
+      // This shouldn't happen anymore because of the trigger that creates auth
+      // users for invited profiles, but if it does, give a useful hint.
+      if (/signups? not allowed/i.test(msg)) {
+        setErr('This email is registered but not yet linked to an auth account. Contact a founder to re-invite you.');
+      } else {
+        setErr(msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -534,7 +552,13 @@ function Login({ authError, setAuthError }) {
       await auth.verifyOtp(email, otp);
       // App's onAuthStateChange will pick up the session and finalize login.
     } catch (e) {
-      setErr(e.message || 'Invalid or expired code.');
+      const msg = e?.message || 'Invalid or expired code.';
+      // Most common: stale code from an older email after multiple "send code" requests.
+      if (/token has expired|invalid token|otp_expired/i.test(msg)) {
+        setErr('That code is expired or invalid. Use the most recent email — older codes stop working.');
+      } else {
+        setErr(msg);
+      }
     } finally {
       setLoading(false);
     }

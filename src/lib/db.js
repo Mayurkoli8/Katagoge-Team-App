@@ -210,10 +210,30 @@ export const db = {
 /* ---------- AUTH ---------- */
 
 export const auth = {
+  /**
+   * Pre-flight check: is this email registered as an active member?
+   * Calls a public Postgres function (email_is_registered) that returns
+   * a boolean without leaking any other data. Lets us refuse OTP sends
+   * for unauthorized emails up front.
+   */
+  async isEmailRegistered(email) {
+    const { data, error } = await supabase.rpc('email_is_registered', {
+      p_email: email.trim().toLowerCase(),
+    });
+    if (error) throw error;
+    return !!data;
+  },
+
   async sendOtp(email) {
     const { error } = await supabase.auth.signInWithOtp({
       email: email.trim().toLowerCase(),
-      options: { shouldCreateUser: true }, // we gate access via the profiles table, not auth signup
+      options: {
+        // Critical: don't auto-create auth users for unknown emails.
+        // The client also pre-checks via isEmailRegistered, this is the
+        // server-side enforcement so even a malicious client can't
+        // pollute auth.users with strangers.
+        shouldCreateUser: false,
+      },
     });
     if (error) throw error;
   },
