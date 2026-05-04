@@ -1923,14 +1923,14 @@ function AdminPanel({ user, users, teams, api, showToast }) {
         ))}
       </div>
 
-      {tab === 'users' && <AdminUsers users={users} teams={teams} role="team" api={api} showToast={showToast} />}
-      {tab === 'founders' && <AdminUsers users={users} teams={teams} role="founder" api={api} showToast={showToast} />}
+      {tab === 'users' && <AdminUsers users={users} teams={teams} role="team" api={api} showToast={showToast} currentUser={user} />}
+      {tab === 'founders' && <AdminUsers users={users} teams={teams} role="founder" api={api} showToast={showToast} currentUser={user} />}
       {tab === 'self' && <AdminSelf user={user} api={api} showToast={showToast} />}
     </div>
   );
 }
 
-function AdminUsers({ users, teams, role, api, showToast }) {
+function AdminUsers({ users, teams, role, api, showToast, currentUser }) {
   const [editing, setEditing] = useState(null);
   const [creating, setCreating] = useState(false);
   const list = users.filter(u => u.role === role);
@@ -1971,7 +1971,11 @@ function AdminUsers({ users, teams, role, api, showToast }) {
   const remove = async (u) => {
     if (!confirm(`Permanently delete ${u.name}? Their reports will be removed too.`)) return;
     try { await api.deleteUser(u.id); showToast('ok', 'User deleted.'); }
-    catch (e) { showToast('err', e.message || 'Delete failed.'); }
+    catch (e) {
+      console.error('Delete failed:', e);
+      const detail = e?.message || e?.details || e?.hint || JSON.stringify(e);
+      showToast('err', `Delete failed: ${detail}`);
+    }
   };
 
   return (
@@ -2013,8 +2017,8 @@ function AdminUsers({ users, teams, role, api, showToast }) {
                 <Td>
                   <div style={{ display: 'flex', gap: 4 }}>
                     <Btn size="sm" onClick={() => start(u)}>EDIT</Btn>
-                    <Btn size="sm" variant="ghost" onClick={() => toggleStatus(u)}>{u.status === 'active' ? 'OFF' : 'ON'}</Btn>
-                    {list.length > 1 && <Btn size="sm" variant="danger" onClick={() => remove(u)}>×</Btn>}
+                    <Btn size="sm" variant="ghost" onClick={() => toggleStatus(u)} disabled={u.id === currentUser?.id}>{u.status === 'active' ? 'OFF' : 'ON'}</Btn>
+                    {list.length > 1 && u.id !== currentUser?.id && <Btn size="sm" variant="danger" onClick={() => remove(u)}>×</Btn>}
                   </div>
                 </Td>
               </tr>
