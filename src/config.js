@@ -19,8 +19,17 @@ export const COMPANY = {
   name: 'Katagoge',                     // display name
   shortName: 'KGG',                     // 3-letter abbreviation for tight spots
   tagline: 'Weekly accountability · Internal comms',
-  logoUrl: 'images/katagoge_logo.png',                        // URL to logo image, or null to show text
-  /** falls back to text logo if logoUrl is null */
+
+  /**
+   * Square ICON ONLY (not a wordmark). Sits to the left of the brand name.
+   * - Place file in /public, then reference with leading slash: '/icon.png'
+   * - Recommended: a square SVG or PNG, 64x64 or larger
+   * - Set to null to show only text (no icon)
+   * - The brand NAME is rendered as text and always picks up the theme color
+   */
+  iconUrl: '/katagoge_logo.png',
+
+  /** Brand name — always shown, in theme ink color */
   textLogo: 'KATAGOGE',
 
   /** affects sender name on auth emails (configure in Supabase too) */
