@@ -1,88 +1,19 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { db, auth, uid } from './lib/db.js';
+import { attach } from './lib/v2.js';
+import { applyTheme, getStoredTheme, listThemes } from './lib/theme.js';
+import {
+  weekId, weekIdOffset, mondayOfWeek, fmtDate, fmtDateTime, relTime, lookbackWeeks,
+} from './lib/dates.js';
+import { COMPANY, FEATURES } from './config.js';
+import {
+  T, mono, sans, useIsMobile,
+  Btn, Field, Input, Textarea, Select, Tag, StatusDot, Section, StatBox, Toast, Empty, Modal, Th, Td, Picker,
+} from './components/ui.jsx';
+import { AttachmentList, AttachmentPicker } from './components/Attachments.jsx';
+import { ChatPanel } from './components/Chat.jsx';
+import { AnalyticsView } from './components/Analytics.jsx';
 
-/* ============================================================
-   KATAGOGE — production build
-   Same UI as the artifact, but:
-     - real Supabase email-OTP auth (no password mode)
-     - all reads/writes go through Postgres with RLS
-     - founder/team role comes from the profiles table
-   ============================================================ */
-
-/* ---------- DESIGN TOKENS ---------- */
-const T = {
-  bg:        '#F4F2E9',
-  bgAlt:     '#EBE8DB',
-  ink:       '#141414',
-  inkSoft:   '#3A3A35',
-  muted:     '#7A7972',
-  rule:      '#141414',
-  ruleSoft:  '#C8C4B5',
-  red:       '#A8321B',
-  redSoft:   '#F2D9CF',
-  green:     '#2F5D3A',
-  greenSoft: '#D4DCC9',
-  amber:     '#9C6A14',
-  amberSoft: '#EFE0B8',
-  blue:      '#1F4368',
-  blueSoft:  '#D2DCE6',
-};
-const mono = { fontFamily: "'IBM Plex Mono', 'JetBrains Mono', 'Menlo', 'Consolas', monospace" };
-const sans = { fontFamily: "'IBM Plex Sans', 'Helvetica Neue', system-ui, sans-serif" };
-
-/* ---------- DATE / WEEK HELPERS ---------- */
-function getISOWeek(date) {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  const dayNum = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  const weekNum = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-  return { year: d.getUTCFullYear(), week: weekNum };
-}
-function weekId(date = new Date()) {
-  const { year, week } = getISOWeek(date);
-  return `${year}-W${String(week).padStart(2, '0')}`;
-}
-function weekIdOffset(offset) {
-  const d = new Date();
-  d.setDate(d.getDate() + offset * 7);
-  return weekId(d);
-}
-function mondayOfWeek(date = new Date()) {
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  d.setDate(d.getDate() + diff);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-function fmtDate(ts) {
-  if (!ts) return '—';
-  const d = new Date(ts);
-  return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
-}
-function fmtDateTime(ts) {
-  if (!ts) return '—';
-  const d = new Date(ts);
-  return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit' }) + ' · ' +
-         d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-}
-function relTime(ts) {
-  if (!ts) return '—';
-  const diff = Date.now() - ts;
-  const m = Math.floor(diff / 60000);
-  const h = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
-  if (m < 1) return 'just now';
-  if (m < 60) return `${m}m ago`;
-  if (h < 24) return `${h}h ago`;
-  if (days < 7) return `${days}d ago`;
-  return fmtDate(ts);
-}
-
-function lookbackWeeks(n = 8) {
-  return Array.from({ length: n }, (_, i) => weekIdOffset(-(n - 1 - i)));
-}
 function computeStreak(userReports) {
   const weeks = lookbackWeeks(12);
   let streak = 0;
@@ -93,6 +24,7 @@ function computeStreak(userReports) {
   }
   return streak;
 }
+
 function detectCarryOver(prevReport, currentPlanText) {
   if (!prevReport || !currentPlanText) return false;
   const plan = (prevReport.thisWeek || '').toLowerCase();
@@ -104,236 +36,12 @@ function detectCarryOver(prevReport, currentPlanText) {
   return hits / words.length > 0.5;
 }
 
-/* ============================================================
-   UI PRIMITIVES
-   ============================================================ */
-
-function Btn({ children, onClick, variant = 'default', disabled, type = 'button', size = 'md', title, style }) {
-  const base = {
-    ...mono,
-    border: `1px solid ${T.ink}`,
-    background: T.bg,
-    color: T.ink,
-    padding: size === 'sm' ? '4px 10px' : size === 'lg' ? '10px 18px' : '6px 14px',
-    fontSize: size === 'sm' ? 11 : size === 'lg' ? 14 : 12,
-    letterSpacing: '0.04em',
-    textTransform: 'uppercase',
-    cursor: disabled ? 'not-allowed' : 'pointer',
-    opacity: disabled ? 0.4 : 1,
-    fontWeight: 500,
-    transition: 'background 80ms linear, color 80ms linear',
-    userSelect: 'none',
-    whiteSpace: 'nowrap',
-  };
-  const variants = {
-    default:  { background: T.bg, color: T.ink },
-    primary:  { background: T.ink, color: T.bg },
-    danger:   { background: T.bg, color: T.red, borderColor: T.red },
-    ghost:    { background: 'transparent', color: T.ink, borderColor: 'transparent' },
-    subtle:   { background: T.bgAlt, color: T.ink, borderColor: T.ruleSoft },
-  };
-  return (
-    <button
-      type={type} title={title} onClick={onClick} disabled={disabled}
-      style={{ ...base, ...variants[variant], ...style }}
-      onMouseEnter={(e) => {
-        if (disabled) return;
-        if (variant === 'primary') e.currentTarget.style.background = T.inkSoft;
-        else if (variant === 'danger') { e.currentTarget.style.background = T.red; e.currentTarget.style.color = T.bg; }
-        else e.currentTarget.style.background = T.bgAlt;
-      }}
-      onMouseLeave={(e) => {
-        if (disabled) return;
-        const v = variants[variant];
-        e.currentTarget.style.background = v.background;
-        e.currentTarget.style.color = v.color;
-      }}>
-      {children}
-    </button>
-  );
+function isMessageForUser(m, user) {
+  if (m.toType === 'all') return true;
+  if (m.toType === 'team') return user.teamIds.some(t => m.toIds.includes(t));
+  if (m.toType === 'individual') return m.toIds.includes(user.id);
+  return false;
 }
-
-function Field({ label, hint, children, required }) {
-  return (
-    <label style={{ display: 'block', marginBottom: 14 }}>
-      <div style={{
-        ...mono, fontSize: 10, letterSpacing: '0.12em',
-        color: T.muted, textTransform: 'uppercase', marginBottom: 4,
-      }}>
-        {label}{required && <span style={{ color: T.red, marginLeft: 4 }}>*</span>}
-        {hint && <span style={{ color: T.ruleSoft, marginLeft: 8, textTransform: 'none', letterSpacing: 0 }}>// {hint}</span>}
-      </div>
-      {children}
-    </label>
-  );
-}
-
-function Input({ value, onChange, placeholder, type = 'text', autoFocus, style, onKeyDown, disabled }) {
-  const [focus, setFocus] = useState(false);
-  return (
-    <input
-      type={type} value={value} placeholder={placeholder} autoFocus={autoFocus} disabled={disabled}
-      onChange={(e) => onChange(e.target.value)}
-      onFocus={() => setFocus(true)} onBlur={() => setFocus(false)}
-      onKeyDown={onKeyDown}
-      style={{
-        ...mono, width: '100%', padding: '8px 10px', fontSize: 13,
-        background: T.bg, color: T.ink,
-        border: `1px solid ${focus ? T.ink : T.ruleSoft}`,
-        outline: 'none', borderRadius: 0, ...style,
-      }}
-    />
-  );
-}
-
-function Textarea({ value, onChange, placeholder, rows = 4, autoFocus, style }) {
-  const [focus, setFocus] = useState(false);
-  return (
-    <textarea
-      value={value} placeholder={placeholder} rows={rows} autoFocus={autoFocus}
-      onChange={(e) => onChange(e.target.value)}
-      onFocus={() => setFocus(true)} onBlur={() => setFocus(false)}
-      style={{
-        ...mono, width: '100%', padding: '8px 10px', fontSize: 13, lineHeight: 1.55,
-        background: T.bg, color: T.ink, resize: 'vertical',
-        border: `1px solid ${focus ? T.ink : T.ruleSoft}`,
-        outline: 'none', borderRadius: 0, fontFamily: mono.fontFamily, ...style,
-      }}
-    />
-  );
-}
-
-function Select({ value, onChange, options, style }) {
-  return (
-    <select value={value} onChange={(e) => onChange(e.target.value)}
-      style={{
-        ...mono, width: '100%', padding: '8px 10px', fontSize: 13,
-        background: T.bg, color: T.ink, border: `1px solid ${T.ruleSoft}`,
-        borderRadius: 0, outline: 'none', ...style,
-      }}>
-      {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-    </select>
-  );
-}
-
-function Tag({ children, color = 'ink' }) {
-  const palette = {
-    ink:   { bg: T.bg, fg: T.ink, b: T.ink },
-    green: { bg: T.greenSoft, fg: T.green, b: T.green },
-    red:   { bg: T.redSoft, fg: T.red, b: T.red },
-    amber: { bg: T.amberSoft, fg: T.amber, b: T.amber },
-    blue:  { bg: T.blueSoft, fg: T.blue, b: T.blue },
-    muted: { bg: T.bgAlt, fg: T.muted, b: T.ruleSoft },
-  };
-  const p = palette[color] || palette.ink;
-  return (
-    <span style={{
-      ...mono, display: 'inline-block', padding: '1px 6px', fontSize: 10,
-      background: p.bg, color: p.fg, border: `1px solid ${p.b}`,
-      letterSpacing: '0.08em', textTransform: 'uppercase',
-    }}>{children}</span>
-  );
-}
-
-function StatusDot({ color }) {
-  const c = { green: T.green, red: T.red, amber: T.amber, blue: T.blue, muted: T.muted, ink: T.ink }[color] || color;
-  return <span style={{ display: 'inline-block', width: 8, height: 8, background: c, marginRight: 6, verticalAlign: 'baseline' }} />;
-}
-
-function Section({ title, right, children, dense }) {
-  return (
-    <section style={{ marginBottom: 28 }}>
-      <div style={{
-        display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
-        borderBottom: `1px solid ${T.ink}`, paddingBottom: 6, marginBottom: dense ? 8 : 14,
-      }}>
-        <h2 style={{ ...mono, margin: 0, fontSize: 13, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
-          {title}
-        </h2>
-        <div>{right}</div>
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function StatBox({ label, value, sub, color = 'ink', wide }) {
-  const c = { green: T.green, red: T.red, amber: T.amber, blue: T.blue, ink: T.ink }[color] || T.ink;
-  return (
-    <div style={{
-      border: `1px solid ${T.ink}`, padding: '10px 14px', background: T.bg,
-      gridColumn: wide ? 'span 2' : 'span 1', minHeight: 72, display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
-    }}>
-      <div style={{ ...mono, fontSize: 9, letterSpacing: '0.16em', color: T.muted, textTransform: 'uppercase' }}>
-        {label}
-      </div>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-        <div style={{ ...mono, fontSize: 32, color: c, lineHeight: 1, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
-          {value}
-        </div>
-        {sub && <div style={{ ...mono, fontSize: 10, color: T.muted }}>{sub}</div>}
-      </div>
-    </div>
-  );
-}
-
-function Toast({ kind, children, onClose }) {
-  const palette = { ok: T.green, err: T.red, info: T.blue, warn: T.amber }[kind] || T.ink;
-  useEffect(() => {
-    if (!onClose) return;
-    const t = setTimeout(onClose, 4500);
-    return () => clearTimeout(t);
-  }, [onClose]);
-  return (
-    <div style={{
-      position: 'fixed', bottom: 16, right: 16, zIndex: 1000,
-      background: T.bg, border: `2px solid ${palette}`, padding: '10px 14px',
-      ...mono, fontSize: 12, maxWidth: 360, boxShadow: '4px 4px 0 rgba(0,0,0,0.06)',
-    }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-        <div style={{ width: 8, height: 8, background: palette, marginTop: 5 }} />
-        <div style={{ flex: 1, color: T.ink }}>{children}</div>
-        {onClose && <span onClick={onClose} style={{ cursor: 'pointer', color: T.muted }}>✕</span>}
-      </div>
-    </div>
-  );
-}
-
-function Empty({ children }) {
-  return (
-    <div style={{
-      border: `1px dashed ${T.ruleSoft}`, padding: 32, textAlign: 'center',
-      ...mono, fontSize: 12, color: T.muted, letterSpacing: '0.04em',
-    }}>{children}</div>
-  );
-}
-
-function Modal({ children, onClose, title }) {
-  return (
-    <div style={{
-      position: 'fixed', inset: 0, background: 'rgba(20, 20, 20, 0.4)',
-      zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
-    }} onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} style={{
-        background: T.bg, border: `1px solid ${T.ink}`, padding: 0, maxWidth: 560, width: '100%',
-        maxHeight: '85vh', overflowY: 'auto',
-      }}>
-        <div style={{
-          padding: '14px 18px', borderBottom: `1px solid ${T.ink}`, display: 'flex',
-          justifyContent: 'space-between', alignItems: 'center', background: T.bgAlt,
-        }}>
-          <div style={{ ...mono, fontSize: 11, letterSpacing: '0.14em' }}>{title}</div>
-          <span onClick={onClose} style={{ cursor: 'pointer', ...mono, color: T.muted, fontSize: 14 }}>✕</span>
-        </div>
-        <div style={{ padding: 18 }}>{children}</div>
-      </div>
-    </div>
-  );
-}
-
-/* ============================================================
-   APP — auth, data, routing
-   ============================================================ */
 
 export default function App() {
   const [booted, setBooted] = useState(false);
@@ -343,50 +51,65 @@ export default function App() {
   const [teams, setTeams] = useState([]);
   const [reports, setReports] = useState([]);
   const [messages, setMessages] = useState([]);
+  const [reportAttachments, setReportAttachments] = useState({});
+  const [messageAttachments, setMessageAttachments] = useState({});
   const [toast, setToast] = useState(null);
   const [authError, setAuthError] = useState(null);
+  const [theme, setTheme] = useState(getStoredTheme());
+
+  useEffect(() => { applyTheme(theme); }, [theme]);
+  useEffect(() => { document.title = `${COMPANY.name} · Internal`; }, []);
 
   const showToast = useCallback((kind, msg) => setToast({ kind, msg }), []);
 
-  /* ----- DATA LOADERS ----- */
-  const loadUsers    = useCallback(async () => { setUsers(await db.listUsers()); }, []);
-  const loadTeams    = useCallback(async () => { setTeams(await db.listTeams()); }, []);
-  const loadReports  = useCallback(async () => { setReports(await db.listReports()); }, []);
-  const loadMessages = useCallback(async () => { setMessages(await db.listMessages()); }, []);
+  const loadUsers = useCallback(async () => { setUsers(await db.listUsers()); }, []);
+  const loadTeams = useCallback(async () => { setTeams(await db.listTeams()); }, []);
+
+  const loadReports = useCallback(async () => {
+    const rs = await db.listReports();
+    setReports(rs);
+    if (FEATURES.attachments && rs.length) {
+      try {
+        const all = await attach.listForReports(rs.map(r => r.id));
+        const byId = {};
+        for (const a of all) (byId[a.reportId] = byId[a.reportId] || []).push(a);
+        setReportAttachments(byId);
+      } catch (e) {}
+    }
+  }, []);
+
+  const loadMessages = useCallback(async () => {
+    const ms = await db.listMessages();
+    setMessages(ms);
+    if (FEATURES.attachments && ms.length) {
+      try {
+        const all = await attach.listForMessages(ms.map(m => m.id));
+        const byId = {};
+        for (const a of all) (byId[a.messageId] = byId[a.messageId] || []).push(a);
+        setMessageAttachments(byId);
+      } catch (e) {}
+    }
+  }, []);
 
   const refreshAll = useCallback(async () => {
     await Promise.all([loadUsers(), loadTeams(), loadReports(), loadMessages()]);
   }, [loadUsers, loadTeams, loadReports, loadMessages]);
 
-  /* ----- BOOT ----- */
   useEffect(() => {
     let cancelled = false;
-
     const finishLogin = async (sess) => {
       try {
         const profile = await db.findProfileByAuthId(sess.user.id);
         if (!profile) {
-          // Auth user exists but no profile row matched - reject them.
-          setAuthError(
-            'Your email is not authorized to access this workspace. ' +
-            'Ask a founder to invite you, then try again.'
-          );
+          setAuthError('Your email is not authorized to access this workspace. Ask a founder to invite you, then try again.');
           await auth.signOut();
-          if (!cancelled) {
-            setSession(null);
-            setCurrentUser(null);
-            setBooted(true);
-          }
+          if (!cancelled) { setSession(null); setCurrentUser(null); setBooted(true); }
           return;
         }
         if (profile.status !== 'active') {
           setAuthError('Your access has been revoked. Contact a founder.');
           await auth.signOut();
-          if (!cancelled) {
-            setSession(null);
-            setCurrentUser(null);
-            setBooted(true);
-          }
+          if (!cancelled) { setSession(null); setCurrentUser(null); setBooted(true); }
           return;
         }
         if (cancelled) return;
@@ -411,9 +134,9 @@ export default function App() {
     const { data: subscription } = auth.onAuthStateChange((sess) => {
       if (sess) finishLogin(sess);
       else {
-        setSession(null);
-        setCurrentUser(null);
+        setSession(null); setCurrentUser(null);
         setUsers([]); setTeams([]); setReports([]); setMessages([]);
+        setReportAttachments({}); setMessageAttachments({});
       }
     });
 
@@ -423,27 +146,46 @@ export default function App() {
     };
   }, [refreshAll]);
 
-  /* ----- API (mutations + reload) ----- */
   const api = useMemo(() => ({
-    async upsertReport(report)     { await db.upsertReport(report);  await loadReports(); },
+    async upsertReport(report, files = []) {
+      await db.upsertReport(report);
+      if (files.length && currentUser) {
+        for (const f of files) {
+          try { await attach.upload(f, { reportId: report.id }, currentUser.id); }
+          catch (e) { showToast('err', `Upload failed: ${f.name} — ${e.message || e}`); }
+        }
+      }
+      await loadReports();
+    },
     async resolveBlocker(reportId) { await db.resolveBlocker(reportId); await loadReports(); },
-    async createMessage(message)   { await db.createMessage(message); await loadMessages(); },
+    async deleteAttachment(att) {
+      try { await attach.remove(att); }
+      catch (e) { showToast('err', e.message || 'Delete failed.'); return; }
+      await Promise.all([loadReports(), loadMessages()]);
+    },
+    async createMessage(message, files = []) {
+      await db.createMessage(message);
+      if (files.length && currentUser) {
+        for (const f of files) {
+          try { await attach.upload(f, { messageId: message.id }, currentUser.id); }
+          catch (e) { showToast('err', `Upload failed: ${f.name} — ${e.message || e}`); }
+        }
+      }
+      await loadMessages();
+    },
     async markMessageRead(message, profileId) {
       await db.markMessageRead(message.id, message.readBy, profileId);
       await loadMessages();
     },
-    async createUser(user)        { await db.createUser(user);   await loadUsers(); },
-    async updateUser(user)        { await db.updateUser(user);   await loadUsers(); if (currentUser?.id === user.id) setCurrentUser(user); },
-    async deleteUser(userId)      { await db.deleteUser(userId); await loadUsers(); },
-    async createTeam(team)        { await db.createTeam(team);   await loadTeams(); },
-    async updateTeam(team)        { await db.updateTeam(team);   await loadTeams(); },
-    async deleteTeam(teamId) {
-      await db.deleteTeam(teamId);
-      // Clean team_id from any user that has it
-      const affected = users.filter(u => u.teamIds.includes(teamId));
-      for (const u of affected) {
-        await db.updateUser({ ...u, teamIds: u.teamIds.filter(id => id !== teamId) });
-      }
+    async createUser(user) { await db.createUser(user); await loadUsers(); },
+    async updateUser(user) { await db.updateUser(user); await loadUsers(); if (currentUser?.id === user.id) setCurrentUser(user); },
+    async deleteUser(id) { await db.deleteUser(id); await loadUsers(); },
+    async createTeam(t) { await db.createTeam(t); await loadTeams(); },
+    async updateTeam(t) { await db.updateTeam(t); await loadTeams(); },
+    async deleteTeam(id) {
+      await db.deleteTeam(id);
+      const affected = users.filter(u => u.teamIds.includes(id));
+      for (const u of affected) await db.updateUser({ ...u, teamIds: u.teamIds.filter(t => t !== id) });
       await Promise.all([loadTeams(), loadUsers()]);
     },
     async toggleTeamMembership(team, userId) {
@@ -454,54 +196,56 @@ export default function App() {
       await db.updateUser({ ...u, teamIds });
       await loadUsers();
     },
-  }), [users, currentUser, loadReports, loadMessages, loadUsers, loadTeams]);
+  }), [users, currentUser, showToast, loadReports, loadMessages, loadUsers, loadTeams]);
 
-  const logout = async () => {
-    await auth.signOut();
-    setAuthError(null);
-  };
-
-  /* ----- RENDER ----- */
-
-  const baseStyle = {
-    minHeight: '100vh', background: T.bg, color: T.ink, ...sans, fontSize: 14,
-  };
+  const logout = async () => { await auth.signOut(); setAuthError(null); };
 
   if (!booted) {
     return (
-      <div style={{ ...baseStyle, display: 'flex', alignItems: 'center', justifyContent: 'center', ...mono, color: T.muted, fontSize: 11, letterSpacing: '0.16em' }}>
-        KATAGOGE // BOOTING…
-      </div>
+      <div style={{
+        minHeight: '100vh', background: T.bg, color: T.muted, ...mono, fontSize: 11,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', letterSpacing: '0.16em',
+      }}>{COMPANY.textLogo} // BOOTING…</div>
     );
   }
 
   return (
-    <div style={baseStyle}>
+    <>
       {!session || !currentUser ? (
-        <Login authError={authError} setAuthError={setAuthError} />
+        <Login authError={authError} setAuthError={setAuthError} theme={theme} setTheme={setTheme} />
       ) : currentUser.role === 'founder' ? (
         <FounderShell
-          user={currentUser}
-          users={users} teams={teams} reports={reports} messages={messages}
-          api={api} onLogout={logout} showToast={showToast}
+          user={currentUser} users={users} teams={teams} reports={reports} messages={messages}
+          reportAttachments={reportAttachments} messageAttachments={messageAttachments}
+          api={api} onLogout={logout} showToast={showToast} theme={theme} setTheme={setTheme}
         />
       ) : (
         <TeamShell
-          user={currentUser}
-          users={users} teams={teams} reports={reports} messages={messages}
-          api={api} onLogout={logout} showToast={showToast}
+          user={currentUser} users={users} teams={teams} reports={reports} messages={messages}
+          reportAttachments={reportAttachments} messageAttachments={messageAttachments}
+          api={api} onLogout={logout} showToast={showToast} theme={theme} setTheme={setTheme}
         />
       )}
       {toast && <Toast kind={toast.kind} onClose={() => setToast(null)}>{toast.msg}</Toast>}
-    </div>
+    </>
   );
 }
 
-/* ============================================================
-   LOGIN — single email-OTP flow for everyone
-   ============================================================ */
+function CompanyLogo({ size = 'md' }) {
+  const px = size === 'lg' ? 36 : size === 'sm' ? 14 : 18;
+  if (COMPANY.logoUrl) return <img src={COMPANY.logoUrl} alt={COMPANY.name} style={{ height: px, width: 'auto', objectFit: 'contain' }} />;
+  return <div style={{ ...mono, fontSize: px, letterSpacing: '0.05em', fontWeight: 600 }}>{COMPANY.textLogo}</div>;
+}
 
-function Login({ authError, setAuthError }) {
+function ThemeSwitcher({ theme, setTheme }) {
+  return (
+    <Select value={theme} onChange={setTheme}
+      options={listThemes().map(t => ({ value: t.id, label: t.label }))}
+      style={{ width: 'auto', fontSize: 11, padding: '4px 8px' }} />
+  );
+}
+
+function Login({ authError, setAuthError, theme, setTheme }) {
   const [step, setStep] = useState('email');
   const [email, setEmail] = useState('');
   const [otp, setOtp] = useState('');
@@ -509,70 +253,42 @@ function Login({ authError, setAuthError }) {
   const [err, setErr] = useState('');
 
   const sendCode = async () => {
-    setErr('');
-    setAuthError(null);
-    if (!email.trim() || !email.includes('@')) {
-      setErr('Enter a valid email.');
-      return;
-    }
+    setErr(''); setAuthError(null);
+    if (!email.trim() || !email.includes('@')) { setErr('Enter a valid email.'); return; }
     setLoading(true);
     try {
-      // Pre-flight: only send a code if this email is registered as an active member.
-      // This stops strangers from getting OTP emails and prevents Supabase from
-      // burning rate limits on unauthorized requests.
       const allowed = await auth.isEmailRegistered(email);
-      if (!allowed) {
-        setErr('This email is not registered. Ask a founder to invite you first.');
-        setLoading(false);
-        return;
-      }
+      if (!allowed) { setErr('This email is not registered. Ask a founder to invite you first.'); setLoading(false); return; }
       await auth.sendOtp(email);
       setStep('otp');
-    } catch (e) {
-      setErr(e?.message || 'Could not send code. Try again.');
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { setErr(e?.message || 'Could not send code. Try again.'); }
+    finally { setLoading(false); }
   };
 
   const verify = async () => {
     setErr('');
     if (otp.length !== 6) { setErr('Enter the 6-digit code.'); return; }
     setLoading(true);
-    try {
-      await auth.verifyOtp(email, otp);
-      // App's onAuthStateChange will pick up the session and finalize login.
-    } catch (e) {
+    try { await auth.verifyOtp(email, otp); }
+    catch (e) {
       const msg = e?.message || 'Invalid or expired code.';
-      // Most common: stale code from an older email after multiple "send code" requests.
       if (/token has expired|invalid token|otp_expired/i.test(msg)) {
         setErr('That code is expired or invalid. Use the most recent email — older codes stop working.');
-      } else {
-        setErr(msg);
-      }
-    } finally {
-      setLoading(false);
-    }
+      } else { setErr(msg); }
+    } finally { setLoading(false); }
   };
 
   return (
-    <div style={{
-      minHeight: '100vh', background: T.bg,
-      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
-    }}>
+    <div style={{ minHeight: '100vh', background: T.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div style={{ width: '100%', maxWidth: 480 }}>
         <div style={{
           borderBottom: `2px solid ${T.ink}`, paddingBottom: 12, marginBottom: 28,
-          display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+          display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12,
         }}>
           <div>
             <div style={{ ...mono, fontSize: 11, letterSpacing: '0.24em', color: T.muted }}>// INTERNAL TOOL</div>
-            <h1 style={{ ...mono, margin: '4px 0 0', fontSize: 36, letterSpacing: '0.05em', fontWeight: 500 }}>
-              KATAGOGE
-            </h1>
-            <div style={{ ...mono, fontSize: 11, color: T.inkSoft, marginTop: 2, letterSpacing: '0.04em' }}>
-              Weekly accountability · Internal comms
-            </div>
+            <div style={{ marginTop: 4 }}><CompanyLogo size="lg" /></div>
+            <div style={{ ...mono, fontSize: 11, color: T.inkSoft, marginTop: 4, letterSpacing: '0.04em' }}>{COMPANY.tagline}</div>
           </div>
           <div style={{ ...mono, fontSize: 10, color: T.muted, textAlign: 'right', letterSpacing: '0.08em' }}>
             <div>{new Date().toLocaleDateString('en-US', { weekday: 'long' })}</div>
@@ -603,7 +319,6 @@ function Login({ authError, setAuthError }) {
               </Btn>
             </>
           )}
-
           {step === 'otp' && (
             <>
               <div style={{ ...mono, fontSize: 11, letterSpacing: '0.12em', marginBottom: 14, color: T.muted }}>
@@ -613,8 +328,7 @@ function Login({ authError, setAuthError }) {
                 ...mono, fontSize: 11, padding: '8px 10px',
                 border: `1px dashed ${T.ruleSoft}`, marginBottom: 14, color: T.inkSoft, lineHeight: 1.55,
               }}>
-                We sent a 6-digit code to <strong>{email}</strong>. Code expires in 1 hour.
-                Check spam if you don't see it within a minute.
+                We sent a 6-digit code to <strong>{email}</strong>. Code expires in 1 hour. Check spam if you don't see it.
               </div>
               <Field label="6-digit code" required>
                 <Input value={otp} onChange={(v) => setOtp(v.replace(/\D/g, '').slice(0, 6))}
@@ -623,7 +337,7 @@ function Login({ authError, setAuthError }) {
                        style={{ letterSpacing: '0.4em', fontSize: 18, textAlign: 'center' }} />
               </Field>
               {err && <div style={{ ...mono, fontSize: 11, color: T.red, marginBottom: 12 }}>! {err}</div>}
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <Btn variant="primary" size="lg" onClick={verify} disabled={loading}>
                   {loading ? 'VERIFYING…' : 'VERIFY →'}
                 </Btn>
@@ -635,72 +349,132 @@ function Login({ authError, setAuthError }) {
           )}
         </div>
 
-        <div style={{ marginTop: 32, ...mono, fontSize: 10, color: T.muted, letterSpacing: '0.08em', textAlign: 'center' }}>
-          KATAGOGE INTERNAL · ALL ACCESS LOGGED · UNAUTHORIZED USE PROHIBITED
+        <div style={{ marginTop: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ ...mono, fontSize: 10, color: T.muted, letterSpacing: '0.08em' }}>{COMPANY.footerText}</div>
+          <ThemeSwitcher theme={theme} setTheme={setTheme} />
         </div>
       </div>
     </div>
   );
 }
 
-/* ============================================================
-   TOP NAV
-   ============================================================ */
+function TopNav({ user, current, onNav, onLogout, role, badge, theme, setTheme }) {
+  const isMobile = useIsMobile();
+  const [menuOpen, setMenuOpen] = useState(false);
 
-function TopNav({ user, current, onNav, onLogout, role, badge }) {
   const items = role === 'founder'
     ? [
         { id: 'overview', label: 'OVERVIEW' },
-        { id: 'reports',  label: 'REPORTS' },
+        { id: 'reports', label: 'REPORTS' },
         { id: 'blockers', label: 'BLOCKERS', highlight: badge?.blockers },
+        ...(FEATURES.analytics ? [{ id: 'analytics', label: 'ANALYTICS' }] : []),
         { id: 'messages', label: 'COMMS' },
-        { id: 'teams',    label: 'TEAMS' },
-        { id: 'admin',    label: 'ADMIN' },
+        ...(FEATURES.chat ? [{ id: 'chat', label: 'CHAT' }] : []),
+        { id: 'teams', label: 'TEAMS' },
+        { id: 'admin', label: 'ADMIN' },
       ]
     : [
-        { id: 'submit',   label: 'SUBMIT' },
-        { id: 'history',  label: 'HISTORY' },
-        { id: 'inbox',    label: 'INBOX', count: badge?.unread },
+        { id: 'submit', label: 'SUBMIT' },
+        { id: 'history', label: 'HISTORY' },
+        { id: 'inbox', label: 'INBOX', count: badge?.unread },
+        ...(FEATURES.chat ? [{ id: 'chat', label: 'CHAT' }] : []),
       ];
+
+  if (isMobile) {
+    return (
+      <>
+        <div style={{
+          borderBottom: `2px solid ${T.ink}`, background: T.bg,
+          padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10,
+          position: 'sticky', top: 0, zIndex: 100,
+        }}>
+          <span onClick={() => setMenuOpen(true)} style={{
+            ...mono, fontSize: 22, cursor: 'pointer', padding: '0 8px', userSelect: 'none',
+          }}>≡</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <CompanyLogo size="sm" />
+            <div style={{ ...mono, fontSize: 9, color: T.muted, letterSpacing: '0.1em' }}>
+              {role === 'founder' ? 'FOUNDER' : 'TEAM'} · {items.find(i => i.id === current)?.label}
+            </div>
+          </div>
+          {(badge?.blockers > 0 || badge?.unread > 0) && (
+            <span style={{ background: T.red, color: T.bg, padding: '2px 6px', ...mono, fontSize: 10 }}>
+              {badge?.blockers || badge?.unread}
+            </span>
+          )}
+        </div>
+        {menuOpen && (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.35)' }}
+               onClick={() => setMenuOpen(false)}>
+            <div onClick={e => e.stopPropagation()} style={{
+              position: 'absolute', left: 0, top: 0, bottom: 0, width: '80%', maxWidth: 280,
+              background: T.bg, borderRight: `2px solid ${T.ink}`, display: 'flex', flexDirection: 'column',
+            }}>
+              <div style={{ padding: '14px 16px', borderBottom: `1px solid ${T.ink}`, background: T.bgAlt }}>
+                <CompanyLogo size="md" />
+                <div style={{ ...mono, fontSize: 10, color: T.muted, letterSpacing: '0.1em', marginTop: 4 }}>
+                  {user.name} · {user.role === 'founder' ? user.title || 'FOUNDER' : (user.position || '').toUpperCase()}
+                </div>
+              </div>
+              <div style={{ flex: 1, overflowY: 'auto' }}>
+                {items.map(it => (
+                  <div key={it.id} onClick={() => { onNav(it.id); setMenuOpen(false); }} style={{
+                    padding: '14px 16px', cursor: 'pointer', borderBottom: `1px solid ${T.ruleSoft}`,
+                    background: current === it.id ? T.bgAlt : 'transparent',
+                    ...mono, fontSize: 12, letterSpacing: '0.12em', display: 'flex', justifyContent: 'space-between',
+                  }}>
+                    {it.label}
+                    {it.highlight > 0 && <span style={{ background: T.red, color: T.bg, padding: '0 6px', fontSize: 10 }}>{it.highlight}</span>}
+                    {it.count > 0 && <span style={{ background: T.ink, color: T.bg, padding: '0 6px', fontSize: 10 }}>{it.count}</span>}
+                  </div>
+                ))}
+              </div>
+              <div style={{ borderTop: `1px solid ${T.ink}`, padding: 14 }}>
+                <div style={{ ...mono, fontSize: 10, letterSpacing: '0.1em', color: T.muted, marginBottom: 6 }}>THEME</div>
+                <ThemeSwitcher theme={theme} setTheme={setTheme} />
+                <div style={{ marginTop: 12 }}>
+                  <Btn size="sm" variant="ghost" onClick={onLogout}>LOGOUT</Btn>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
+
   return (
     <div style={{
       borderBottom: `2px solid ${T.ink}`, background: T.bg,
-      padding: '10px 24px', display: 'flex', alignItems: 'center', gap: 24, position: 'sticky', top: 0, zIndex: 100,
+      padding: '10px 24px', display: 'flex', alignItems: 'center', gap: 16,
+      position: 'sticky', top: 0, zIndex: 100, flexWrap: 'wrap',
     }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 14 }}>
-        <div style={{ ...mono, fontSize: 18, letterSpacing: '0.06em', fontWeight: 600 }}>KATAGOGE</div>
+        <CompanyLogo />
         <div style={{ ...mono, fontSize: 10, color: T.muted, letterSpacing: '0.16em' }}>
-          {role === 'founder' ? '/ FOUNDER CONSOLE' : '/ TEAM TERMINAL'}
+          {role === 'founder' ? '/ FOUNDER' : '/ TEAM'}
         </div>
       </div>
-      <div style={{ display: 'flex', gap: 0, flex: 1, marginLeft: 12 }}>
+      <div style={{ display: 'flex', flex: 1, marginLeft: 8, flexWrap: 'wrap' }}>
         {items.map(it => {
           const active = current === it.id;
           return (
-            <div key={it.id} onClick={() => onNav(it.id)}
-              style={{
-                ...mono, fontSize: 11, letterSpacing: '0.14em', padding: '6px 14px',
-                cursor: 'pointer', borderBottom: active ? `2px solid ${T.ink}` : '2px solid transparent',
-                marginBottom: -12, position: 'relative', display: 'flex', alignItems: 'center', gap: 6,
-                color: active ? T.ink : T.inkSoft,
-              }}>
+            <div key={it.id} onClick={() => onNav(it.id)} style={{
+              ...mono, fontSize: 11, letterSpacing: '0.14em', padding: '6px 12px',
+              cursor: 'pointer', borderBottom: active ? `2px solid ${T.ink}` : '2px solid transparent',
+              marginBottom: -12, display: 'flex', alignItems: 'center', gap: 6,
+              color: active ? T.ink : T.inkSoft,
+            }}>
               {it.label}
-              {it.highlight > 0 && (
-                <span style={{ background: T.red, color: T.bg, padding: '0px 4px', fontSize: 9, marginLeft: 2 }}>
-                  {it.highlight}
-                </span>
-              )}
-              {it.count > 0 && (
-                <span style={{ background: T.ink, color: T.bg, padding: '0px 4px', fontSize: 9, marginLeft: 2 }}>
-                  {it.count}
-                </span>
-              )}
+              {it.highlight > 0 && <span style={{ background: T.red, color: T.bg, padding: '0 4px', fontSize: 9 }}>{it.highlight}</span>}
+              {it.count > 0 && <span style={{ background: T.ink, color: T.bg, padding: '0 4px', fontSize: 9 }}>{it.count}</span>}
             </div>
           );
         })}
       </div>
+      <ThemeSwitcher theme={theme} setTheme={setTheme} />
       <div style={{ ...mono, fontSize: 10, color: T.muted, textAlign: 'right' }}>
-        <div style={{ color: T.ink, fontSize: 11, letterSpacing: '0.04em' }}>{user.name}</div>
+        <div style={{ color: T.ink, fontSize: 11 }}>{user.name}</div>
         <div style={{ letterSpacing: '0.08em' }}>{user.role === 'founder' ? user.title || 'FOUNDER' : (user.position || '').toUpperCase()}</div>
       </div>
       <Btn size="sm" variant="ghost" onClick={onLogout}>LOGOUT</Btn>
@@ -708,48 +482,34 @@ function TopNav({ user, current, onNav, onLogout, role, badge }) {
   );
 }
 
-/* ============================================================
-   TEAM SHELL & VIEWS
-   ============================================================ */
-
-function isMessageForUser(m, user) {
-  if (m.toType === 'all') return true;
-  if (m.toType === 'team') return user.teamIds.some(t => m.toIds.includes(t));
-  if (m.toType === 'individual') return m.toIds.includes(user.id);
-  return false;
-}
-
-function TeamShell({ user, users, teams, reports, messages, api, onLogout, showToast }) {
+function TeamShell({ user, users, teams, reports, messages, reportAttachments, messageAttachments, api, onLogout, showToast, theme, setTheme }) {
   const [view, setView] = useState('submit');
-
   const myMessages = messages.filter(m => isMessageForUser(m, user));
   const unread = myMessages.filter(m => !m.readBy.includes(user.id)).length;
 
-  // Mark messages read when inbox opens
   useEffect(() => {
     if (view !== 'inbox') return;
     (async () => {
       for (const m of myMessages) {
-        if (!m.readBy.includes(user.id)) {
-          await api.markMessageRead(m, user.id);
-        }
+        if (!m.readBy.includes(user.id)) await api.markMessageRead(m, user.id);
       }
     })();
   }, [view]); // eslint-disable-line
 
   return (
     <>
-      <TopNav user={user} role="team" current={view} onNav={setView} onLogout={onLogout} badge={{ unread }} />
-      <div style={{ padding: '24px 32px', maxWidth: 1200, margin: '0 auto' }}>
-        {view === 'submit'  && <TeamSubmit user={user} reports={reports} api={api} messages={myMessages} showToast={showToast} />}
-        {view === 'history' && <TeamHistory reports={reports.filter(r => r.userId === user.id)} />}
-        {view === 'inbox'   && <TeamInbox user={user} messages={myMessages} teams={teams} />}
+      <TopNav user={user} role="team" current={view} onNav={setView} onLogout={onLogout} badge={{ unread }} theme={theme} setTheme={setTheme} />
+      <div style={{ padding: '20px 16px', maxWidth: 1200, margin: '0 auto' }}>
+        {view === 'submit' && <TeamSubmit user={user} reports={reports} reportAttachments={reportAttachments} api={api} messages={myMessages} showToast={showToast} />}
+        {view === 'history' && <TeamHistory reports={reports.filter(r => r.userId === user.id)} reportAttachments={reportAttachments} />}
+        {view === 'inbox' && <TeamInbox user={user} messages={myMessages} teams={teams} messageAttachments={messageAttachments} />}
+        {view === 'chat' && FEATURES.chat && <ChatPanel user={user} users={users} isFounder={false} showToast={showToast} />}
       </div>
     </>
   );
 }
 
-function TeamSubmit({ user, reports, api, messages, showToast }) {
+function TeamSubmit({ user, reports, reportAttachments, api, messages, showToast }) {
   const currentWeek = weekId();
   const myReports = reports.filter(r => r.userId === user.id);
   const existing = myReports.find(r => r.weekId === currentWeek);
@@ -758,10 +518,10 @@ function TeamSubmit({ user, reports, api, messages, showToast }) {
   const [lastWeek, setLastWeek] = useState(existing?.lastWeek || '');
   const [thisWeek, setThisWeek] = useState(existing?.thisWeek || '');
   const [blockers, setBlockers] = useState(existing?.blockers || '');
+  const [files, setFiles] = useState([]);
   const [editing, setEditing] = useState(!existing);
   const [saving, setSaving] = useState(false);
 
-  // Sync local state when remote `existing` changes (e.g. after refresh)
   useEffect(() => {
     if (existing && !editing) {
       setLastWeek(existing.lastWeek);
@@ -774,48 +534,37 @@ function TeamSubmit({ user, reports, api, messages, showToast }) {
   const monday = mondayOfWeek(today);
   const isLate = today.getTime() > monday.getTime() + 86400000;
   const dayOfWeek = today.toLocaleDateString('en-US', { weekday: 'long' });
-
   const streak = computeStreak(myReports);
-  const carryOver = useMemo(
-    () => detectCarryOver(lastWeekReport, thisWeek),
-    [lastWeekReport, thisWeek]
-  );
+  const carryOver = useMemo(() => detectCarryOver(lastWeekReport, thisWeek), [lastWeekReport, thisWeek]);
   const recentTask = useMemo(
-    () => messages
-      .filter(m => m.type === 'task' && (!m.dueDate || m.dueDate > Date.now() - 14 * 86400000))
-      .sort((a, b) => (a.dueDate || Infinity) - (b.dueDate || Infinity))[0],
+    () => messages.filter(m => m.type === 'task' && (!m.dueDate || m.dueDate > Date.now() - 14 * 86400000))
+                  .sort((a, b) => (a.dueDate || Infinity) - (b.dueDate || Infinity))[0],
     [messages]
   );
 
   const submit = async () => {
-    if (!lastWeek.trim() || !thisWeek.trim()) {
-      showToast('err', 'Last week and this week are required.');
-      return;
-    }
+    if (!lastWeek.trim() || !thisWeek.trim()) { showToast('err', 'Last week and this week are required.'); return; }
     setSaving(true);
     try {
       const report = {
         id: existing?.id || uid('rep'),
-        userId: user.id,
-        weekId: currentWeek,
+        userId: user.id, weekId: currentWeek,
         submittedAt: existing?.submittedAt || Date.now(),
         updatedAt: existing ? Date.now() : null,
-        lastWeek: lastWeek.trim(),
-        thisWeek: thisWeek.trim(),
-        blockers: blockers.trim(),
+        lastWeek: lastWeek.trim(), thisWeek: thisWeek.trim(), blockers: blockers.trim(),
         hasBlockers: !!blockers.trim(),
         isLate: existing ? existing.isLate : isLate,
         blockerResolved: existing?.blockerResolved || false,
       };
-      await api.upsertReport(report);
+      await api.upsertReport(report, files);
+      setFiles([]);
       setEditing(false);
       showToast('ok', existing ? 'Report updated.' : 'Submitted. Have a good week.');
-    } catch (e) {
-      showToast('err', e.message || 'Save failed.');
-    } finally {
-      setSaving(false);
-    }
+    } catch (e) { showToast('err', e.message || 'Save failed.'); }
+    finally { setSaving(false); }
   };
+
+  const existingAttachments = existing ? (reportAttachments[existing.id] || []) : [];
 
   return (
     <div>
@@ -823,7 +572,7 @@ function TeamSubmit({ user, reports, api, messages, showToast }) {
         border: `1px solid ${T.ink}`,
         background: existing ? T.greenSoft : (isLate ? T.amberSoft : T.bg),
         padding: '14px 18px', marginBottom: 24,
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap',
       }}>
         <div>
           <div style={{ ...mono, fontSize: 10, letterSpacing: '0.16em', color: T.muted, textTransform: 'uppercase' }}>
@@ -858,8 +607,7 @@ function TeamSubmit({ user, reports, api, messages, showToast }) {
         </div>
       )}
 
-      <Section
-        title="Weekly Report"
+      <Section title="Weekly Report"
         right={existing && !editing && <Btn size="sm" onClick={() => setEditing(true)}>EDIT</Btn>}>
         {(!existing || editing) ? (
           <>
@@ -876,12 +624,10 @@ function TeamSubmit({ user, reports, api, messages, showToast }) {
               </div>
             )}
             <Field label="What you'll do this week" required hint="3–5 concrete deliverables, in priority order">
-              <Textarea value={thisWeek} onChange={setThisWeek} rows={5}
-                placeholder="1. ___&#10;2. ___&#10;3. ___" />
+              <Textarea value={thisWeek} onChange={setThisWeek} rows={5} placeholder={"1. ___\n2. ___\n3. ___"} />
             </Field>
             <Field label="Blockers" hint="leave empty if none. don't soften.">
-              <Textarea value={blockers} onChange={setBlockers} rows={3}
-                placeholder="What's preventing progress? Who/what do you need?" />
+              <Textarea value={blockers} onChange={setBlockers} rows={3} placeholder="What's preventing progress? Who/what do you need?" />
             </Field>
             {blockers.trim() && (
               <div style={{
@@ -892,20 +638,30 @@ function TeamSubmit({ user, reports, api, messages, showToast }) {
                 Founders see this on the blocker board immediately.
               </div>
             )}
-            <div style={{ display: 'flex', gap: 8, marginTop: 18 }}>
+            {FEATURES.attachments && (
+              <Field label="attachments" hint="screenshots, docs, anything that helps">
+                <AttachmentPicker files={files} setFiles={setFiles} />
+              </Field>
+            )}
+            {existingAttachments.length > 0 && (
+              <Field label="existing attachments">
+                <AttachmentList attachments={existingAttachments} onRemove={async (a) => { await api.deleteAttachment(a); }} />
+              </Field>
+            )}
+            <div style={{ display: 'flex', gap: 8, marginTop: 18, flexWrap: 'wrap' }}>
               <Btn variant="primary" size="lg" onClick={submit} disabled={saving}>
                 {saving ? 'SAVING…' : (existing ? 'UPDATE REPORT' : 'SUBMIT REPORT')}
               </Btn>
               {editing && existing && (
                 <Btn size="lg" onClick={() => {
                   setLastWeek(existing.lastWeek); setThisWeek(existing.thisWeek); setBlockers(existing.blockers || '');
-                  setEditing(false);
+                  setFiles([]); setEditing(false);
                 }}>CANCEL</Btn>
               )}
             </div>
           </>
         ) : (
-          <ReportView report={existing} />
+          <ReportView report={existing} attachments={existingAttachments} />
         )}
       </Section>
 
@@ -914,9 +670,7 @@ function TeamSubmit({ user, reports, api, messages, showToast }) {
           <div style={{
             border: `1px solid ${T.ruleSoft}`, padding: 14, ...mono, fontSize: 12, color: T.inkSoft,
             lineHeight: 1.6, background: T.bgAlt, whiteSpace: 'pre-wrap',
-          }}>
-            {lastWeekReport.thisWeek}
-          </div>
+          }}>{lastWeekReport.thisWeek}</div>
           <div style={{ ...mono, fontSize: 10, color: T.muted, marginTop: 6, letterSpacing: '0.08em' }}>
             // use this to guide what you write under "what you did last week"
           </div>
@@ -926,7 +680,7 @@ function TeamSubmit({ user, reports, api, messages, showToast }) {
   );
 }
 
-function ReportView({ report }) {
+function ReportView({ report, attachments = [] }) {
   return (
     <div style={{ border: `1px solid ${T.ruleSoft}`, background: T.bg }}>
       <ReportField label="LAST WEEK" body={report.lastWeek} />
@@ -938,27 +692,35 @@ function ReportView({ report }) {
           // no blockers reported
         </div>
       )}
-      <div style={{ borderTop: `1px solid ${T.ruleSoft}`, padding: '8px 14px', ...mono, fontSize: 10, color: T.muted, letterSpacing: '0.08em', display: 'flex', justifyContent: 'space-between' }}>
+      {attachments.length > 0 && (
+        <div style={{ borderTop: `1px solid ${T.ruleSoft}`, padding: '12px 14px' }}>
+          <div style={{ ...mono, fontSize: 9, letterSpacing: '0.16em', color: T.muted, marginBottom: 6 }}>
+            ATTACHMENTS · {attachments.length}
+          </div>
+          <AttachmentList attachments={attachments} dense />
+        </div>
+      )}
+      <div style={{
+        borderTop: `1px solid ${T.ruleSoft}`, padding: '8px 14px', ...mono, fontSize: 10, color: T.muted,
+        letterSpacing: '0.08em', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 4,
+      }}>
         <span>SUBMITTED {fmtDateTime(report.submittedAt)}</span>
         <span>{report.isLate ? 'LATE' : 'ON-TIME'} · {report.weekId}</span>
       </div>
     </div>
   );
 }
+
 function ReportField({ label, body, accent }) {
   return (
     <div style={{ borderTop: `1px solid ${T.ruleSoft}`, padding: '12px 14px' }}>
-      <div style={{ ...mono, fontSize: 9, letterSpacing: '0.16em', color: accent || T.muted, marginBottom: 6 }}>
-        {label}
-      </div>
-      <div style={{ ...sans, fontSize: 13, lineHeight: 1.55, whiteSpace: 'pre-wrap', color: T.ink }}>
-        {body}
-      </div>
+      <div style={{ ...mono, fontSize: 9, letterSpacing: '0.16em', color: accent || T.muted, marginBottom: 6 }}>{label}</div>
+      <div style={{ ...sans, fontSize: 13, lineHeight: 1.55, whiteSpace: 'pre-wrap', color: T.ink }}>{body}</div>
     </div>
   );
 }
 
-function TeamHistory({ reports }) {
+function TeamHistory({ reports, reportAttachments }) {
   const [filter, setFilter] = useState('all');
   const sorted = [...reports].sort((a, b) => b.submittedAt - a.submittedAt);
   const filtered = sorted.filter(r => {
@@ -966,7 +728,6 @@ function TeamHistory({ reports }) {
     if (filter === 'late') return r.isLate;
     return true;
   });
-
   const totalSubmitted = reports.length;
   const lateCount = reports.filter(r => r.isLate).length;
   const blockedCount = reports.filter(r => r.hasBlockers).length;
@@ -974,7 +735,7 @@ function TeamHistory({ reports }) {
 
   return (
     <div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginBottom: 24 }}>
         <StatBox label="REPORTS LOGGED" value={totalSubmitted} />
         <StatBox label="ON-TIME RATE" value={`${onTimeRate}%`} color={onTimeRate >= 80 ? 'green' : onTimeRate >= 50 ? 'amber' : 'red'} />
         <StatBox label="LATE" value={lateCount} color={lateCount ? 'amber' : 'ink'} />
@@ -991,14 +752,14 @@ function TeamHistory({ reports }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             {filtered.map(r => (
               <div key={r.id}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, ...mono, fontSize: 11, color: T.muted, letterSpacing: '0.08em' }}>
+                <div style={{
+                  display: 'flex', justifyContent: 'space-between', marginBottom: 4,
+                  ...mono, fontSize: 11, color: T.muted, letterSpacing: '0.08em', flexWrap: 'wrap', gap: 4,
+                }}>
                   <span>{r.weekId} · {fmtDate(r.submittedAt)}</span>
-                  <span>
-                    {r.isLate && <Tag color="amber">LATE</Tag>}{' '}
-                    {r.hasBlockers && <Tag color="red">BLOCKER</Tag>}
-                  </span>
+                  <span>{r.isLate && <Tag color="amber">LATE</Tag>} {r.hasBlockers && <Tag color="red">BLOCKER</Tag>}</span>
                 </div>
-                <ReportView report={r} />
+                <ReportView report={r} attachments={reportAttachments[r.id] || []} />
               </div>
             ))}
           </div>
@@ -1008,7 +769,7 @@ function TeamHistory({ reports }) {
   );
 }
 
-function TeamInbox({ user, messages, teams }) {
+function TeamInbox({ user, messages, teams, messageAttachments }) {
   const [filter, setFilter] = useState('all');
   const sorted = [...messages].sort((a, b) => b.createdAt - a.createdAt);
   const filtered = sorted.filter(m => {
@@ -1016,7 +777,6 @@ function TeamInbox({ user, messages, teams }) {
     if (filter === 'unread') return !m.readBy.includes(user.id);
     return true;
   });
-
   return (
     <div>
       <Section title="Inbox" right={
@@ -1027,14 +787,16 @@ function TeamInbox({ user, messages, teams }) {
           </div>
         }>
         {filtered.length === 0 ? <Empty>No messages.</Empty> : (
-          <div>{filtered.map(m => <MessageRow key={m.id} m={m} user={user} teams={teams} />)}</div>
+          <div>{filtered.map(m => (
+            <MessageRow key={m.id} m={m} user={user} teams={teams} attachments={messageAttachments[m.id] || []} />
+          ))}</div>
         )}
       </Section>
     </div>
   );
 }
 
-function MessageRow({ m, user, teams }) {
+function MessageRow({ m, user, teams, attachments = [] }) {
   const [open, setOpen] = useState(false);
   const isUnread = !m.readBy.includes(user.id);
   const target = m.toType === 'all' ? 'EVERYONE' :
@@ -1043,17 +805,16 @@ function MessageRow({ m, user, teams }) {
   return (
     <div style={{ borderTop: `1px solid ${T.ruleSoft}` }}>
       <div onClick={() => setOpen(!open)} style={{
-        padding: '12px 14px', cursor: 'pointer',
-        background: isUnread ? T.bg : 'transparent',
+        padding: '12px 14px', cursor: 'pointer', background: isUnread ? T.bg : 'transparent',
         display: 'grid', gridTemplateColumns: '12px 1fr auto', gap: 10, alignItems: 'center',
       }}>
         <div style={{ width: 8, height: 8, background: isUnread ? T.ink : 'transparent', border: isUnread ? 'none' : `1px solid ${T.ruleSoft}` }} />
-        <div>
+        <div style={{ minWidth: 0 }}>
           <div style={{ ...mono, fontSize: 9, letterSpacing: '0.14em', color: T.muted, marginBottom: 2 }}>
             {target} · {m.fromName} · {relTime(m.createdAt)}
           </div>
           <div style={{ ...mono, fontSize: 13, color: T.ink, fontWeight: isUnread ? 600 : 400 }}>
-            {m.subject}
+            {m.subject}{attachments.length > 0 && <span style={{ color: T.muted, marginLeft: 6 }}>· 📎{attachments.length}</span>}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
@@ -1070,31 +831,31 @@ function MessageRow({ m, user, teams }) {
               DUE {fmtDate(m.dueDate)}
             </div>
           )}
+          {attachments.length > 0 && <AttachmentList attachments={attachments} dense />}
         </div>
       )}
     </div>
   );
 }
 
-/* ============================================================
-   FOUNDER SHELL & VIEWS
-   ============================================================ */
-
-function FounderShell({ user, users, teams, reports, messages, api, onLogout, showToast }) {
+function FounderShell({ user, users, teams, reports, messages, reportAttachments, messageAttachments, api, onLogout, showToast, theme, setTheme }) {
   const [view, setView] = useState('overview');
   const currentWeek = weekId();
   const activeBlockers = reports.filter(r => r.weekId === currentWeek && r.hasBlockers && !r.blockerResolved).length;
 
   return (
     <>
-      <TopNav user={user} role="founder" current={view} onNav={setView} onLogout={onLogout} badge={{ blockers: activeBlockers }} />
-      <div style={{ padding: '24px 32px', maxWidth: 1400, margin: '0 auto' }}>
+      <TopNav user={user} role="founder" current={view} onNav={setView} onLogout={onLogout}
+              badge={{ blockers: activeBlockers }} theme={theme} setTheme={setTheme} />
+      <div style={{ padding: '20px 16px', maxWidth: 1400, margin: '0 auto' }}>
         {view === 'overview' && <FounderOverview user={user} users={users} teams={teams} reports={reports} api={api} onNav={setView} />}
-        {view === 'reports'  && <FounderReports users={users} teams={teams} reports={reports} />}
+        {view === 'reports' && <FounderReports users={users} teams={teams} reports={reports} reportAttachments={reportAttachments} />}
         {view === 'blockers' && <FounderBlockers users={users} reports={reports} api={api} founder={user} showToast={showToast} />}
-        {view === 'messages' && <FounderMessages user={user} users={users} teams={teams} messages={messages} api={api} showToast={showToast} />}
-        {view === 'teams'    && <FounderTeams users={users} teams={teams} reports={reports} api={api} showToast={showToast} />}
-        {view === 'admin'    && <AdminPanel user={user} users={users} teams={teams} api={api} showToast={showToast} />}
+        {view === 'analytics' && FEATURES.analytics && <AnalyticsView users={users} teams={teams} reports={reports} />}
+        {view === 'messages' && <FounderMessages user={user} users={users} teams={teams} messages={messages} messageAttachments={messageAttachments} api={api} showToast={showToast} />}
+        {view === 'chat' && FEATURES.chat && <ChatPanel user={user} users={users} isFounder={true} showToast={showToast} />}
+        {view === 'teams' && <FounderTeams users={users} teams={teams} reports={reports} api={api} showToast={showToast} />}
+        {view === 'admin' && <AdminPanel user={user} users={users} teams={teams} api={api} showToast={showToast} />}
       </div>
     </>
   );
@@ -1128,13 +889,13 @@ function FounderOverview({ user, users, teams, reports, api, onNav }) {
     <div>
       <div style={{
         borderBottom: `1px solid ${T.ink}`, paddingBottom: 12, marginBottom: 24,
-        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap',
       }}>
         <div>
           <div style={{ ...mono, fontSize: 11, color: T.muted, letterSpacing: '0.16em' }}>
             // OVERVIEW · WEEK {currentWeek.split('-W')[1]} · {today.toLocaleDateString('en-US', { weekday: 'long' }).toUpperCase()}
           </div>
-          <h1 style={{ ...sans, margin: '4px 0 0', fontSize: 28, fontWeight: 500, letterSpacing: '-0.01em' }}>
+          <h1 style={{ ...sans, margin: '4px 0 0', fontSize: 24, fontWeight: 500, letterSpacing: '-0.01em' }}>
             Good {today.getHours() < 12 ? 'morning' : today.getHours() < 17 ? 'afternoon' : 'evening'}, {user.name.split(' ')[0]}.
           </h1>
         </div>
@@ -1144,7 +905,7 @@ function FounderOverview({ user, users, teams, reports, api, onNav }) {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12, marginBottom: 28 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12, marginBottom: 28 }}>
         <StatBox label="TEAM SIZE" value={teamUsers.length} sub="active" />
         <StatBox label="SUBMITTED" value={submittedCount} color="green" sub={`${submissionRate}%`} />
         <StatBox label="PENDING" value={pendingCount} color="amber" />
@@ -1153,18 +914,16 @@ function FounderOverview({ user, users, teams, reports, api, onNav }) {
         <StatBox label="BLOCKERS" value={activeBlockers.length} color={activeBlockers.length ? 'red' : 'ink'} />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 28 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 28 }}>
         <div>
           <Section title={`Week ${currentWeek.split('-W')[1]} · Submissions`}
             right={<Btn size="sm" variant="ghost" onClick={() => onNav('reports')}>OPEN REPORTS →</Btn>}>
             <SubmissionTable userStatuses={userStatuses} teams={teams} />
           </Section>
-
           <Section title="Submission Heatmap · Last 8 Weeks" dense>
             <Heatmap users={teamUsers} reports={reports} />
           </Section>
         </div>
-
         <div>
           <Section title={`Active Blockers (${activeBlockers.length})`}
             right={activeBlockers.length > 0 && <Tag color="red">PRIORITY</Tag>}>
@@ -1172,13 +931,11 @@ function FounderOverview({ user, users, teams, reports, api, onNav }) {
               <div>
                 {activeBlockers.map(r => {
                   const u = users.find(x => x.id === r.userId);
-                  return <BlockerCard key={r.id} report={r} user={u} compact
-                    onResolve={() => api.resolveBlocker(r.id)} />;
+                  return <BlockerCard key={r.id} report={r} user={u} compact onResolve={() => api.resolveBlocker(r.id)} />;
                 })}
               </div>
             )}
           </Section>
-
           {olderBlockers.length > 0 && (
             <Section title={`Lingering (${olderBlockers.length})`} dense>
               <div style={{ ...mono, fontSize: 11, color: T.muted, marginBottom: 8, letterSpacing: '0.04em' }}>
@@ -1186,8 +943,7 @@ function FounderOverview({ user, users, teams, reports, api, onNav }) {
               </div>
               {olderBlockers.slice(0, 3).map(r => {
                 const u = users.find(x => x.id === r.userId);
-                return <BlockerCard key={r.id} report={r} user={u} compact lingering
-                  onResolve={() => api.resolveBlocker(r.id)} />;
+                return <BlockerCard key={r.id} report={r} user={u} compact lingering onResolve={() => api.resolveBlocker(r.id)} />;
               })}
             </Section>
           )}
@@ -1200,14 +956,11 @@ function FounderOverview({ user, users, teams, reports, api, onNav }) {
 function SubmissionTable({ userStatuses, teams }) {
   const [openId, setOpenId] = useState(null);
   return (
-    <div style={{ border: `1px solid ${T.ink}` }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', ...mono, fontSize: 12 }}>
+    <div style={{ border: `1px solid ${T.ink}`, overflowX: 'auto' }}>
+      <table style={{ width: '100%', minWidth: 600, borderCollapse: 'collapse', ...mono, fontSize: 12 }}>
         <thead>
           <tr style={{ background: T.bgAlt, borderBottom: `1px solid ${T.ink}` }}>
-            <Th w="40%">NAME</Th>
-            <Th w="25%">TEAM</Th>
-            <Th w="15%">STATUS</Th>
-            <Th w="20%">SUBMITTED</Th>
+            <Th w="40%">NAME</Th><Th w="25%">TEAM</Th><Th w="15%">STATUS</Th><Th w="20%">SUBMITTED</Th>
           </tr>
         </thead>
         <tbody>
@@ -1233,7 +986,7 @@ function SubmissionTable({ userStatuses, teams }) {
                       {teamNames.map(n => <Tag key={n} color="muted">{n}</Tag>)}
                     </div>
                   </Td>
-                  <Td><StatusDot color={statusColor} />{statusLabel}{report?.hasBlockers && <Tag color="red">●</Tag>}</Td>
+                  <Td><StatusDot color={statusColor} />{statusLabel} {report?.hasBlockers && <Tag color="red">●</Tag>}</Td>
                   <Td>{report ? fmtDateTime(report.submittedAt) : <span style={{ color: T.muted }}>—</span>}</Td>
                 </tr>
                 {isOpen && report && (
@@ -1250,21 +1003,11 @@ function SubmissionTable({ userStatuses, teams }) {
   );
 }
 
-function Th({ children, w }) {
-  return <th style={{
-    ...mono, fontSize: 9, letterSpacing: '0.14em', textAlign: 'left',
-    padding: '8px 12px', color: T.inkSoft, fontWeight: 500, width: w,
-  }}>{children}</th>;
-}
-function Td({ children, w, align = 'left' }) {
-  return <td style={{ padding: '10px 12px', verticalAlign: 'top', textAlign: align, width: w }}>{children}</td>;
-}
-
 function Heatmap({ users, reports }) {
   const weeks = lookbackWeeks(8);
   return (
     <div style={{ border: `1px solid ${T.ink}`, background: T.bg, overflowX: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', ...mono, fontSize: 11 }}>
+      <table style={{ width: '100%', minWidth: 600, borderCollapse: 'collapse', ...mono, fontSize: 11 }}>
         <thead>
           <tr style={{ background: T.bgAlt, borderBottom: `1px solid ${T.ink}` }}>
             <Th w="22%">MEMBER</Th>
@@ -1309,7 +1052,7 @@ function Heatmap({ users, reports }) {
           })}
         </tbody>
       </table>
-      <div style={{ borderTop: `1px solid ${T.ruleSoft}`, padding: '6px 12px', ...mono, fontSize: 10, color: T.muted, display: 'flex', gap: 14, letterSpacing: '0.06em' }}>
+      <div style={{ borderTop: `1px solid ${T.ruleSoft}`, padding: '6px 12px', ...mono, fontSize: 10, color: T.muted, display: 'flex', gap: 14, letterSpacing: '0.06em', flexWrap: 'wrap' }}>
         <span><span style={{ background: T.greenSoft, padding: '0 6px', border: `1px solid ${T.ruleSoft}` }}>✓</span> ON-TIME</span>
         <span><span style={{ background: T.amberSoft, padding: '0 6px', border: `1px solid ${T.ruleSoft}` }}>L</span> LATE</span>
         <span><span style={{ background: T.redSoft, padding: '0 6px', border: `1px solid ${T.ruleSoft}` }}>B</span> BLOCKER</span>
@@ -1327,14 +1070,12 @@ function BlockerCard({ report, user, compact, lingering, onResolve, onMessage })
       border: `1px solid ${T.ruleSoft}`, borderLeft: `3px solid ${lingering ? T.amber : T.red}`,
       padding: 12, background: T.bg, marginBottom: 8,
     }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6, flexWrap: 'wrap', gap: 4 }}>
         <div style={{ ...sans, fontSize: 13, fontWeight: 500 }}>{user.name}</div>
-        <div style={{ ...mono, fontSize: 10, color: T.muted, letterSpacing: '0.06em' }}>
-          {report.weekId} · {ageDays}d old
-        </div>
+        <div style={{ ...mono, fontSize: 10, color: T.muted, letterSpacing: '0.06em' }}>{report.weekId} · {ageDays}d old</div>
       </div>
       <div style={{ ...sans, fontSize: 13, color: T.ink, lineHeight: 1.5, marginBottom: 8 }}>{report.blockers}</div>
-      <div style={{ display: 'flex', gap: 6 }}>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         {onResolve && <Btn size="sm" onClick={onResolve}>MARK RESOLVED</Btn>}
         {onMessage && <Btn size="sm" variant="ghost" onClick={onMessage}>MESSAGE →</Btn>}
       </div>
@@ -1342,7 +1083,7 @@ function BlockerCard({ report, user, compact, lingering, onResolve, onMessage })
   );
 }
 
-function FounderReports({ users, teams, reports }) {
+function FounderReports({ users, teams, reports, reportAttachments }) {
   const [weekFilter, setWeekFilter] = useState(weekId());
   const [teamFilter, setTeamFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -1350,7 +1091,6 @@ function FounderReports({ users, teams, reports }) {
 
   const teamUsers = users.filter(u => u.role === 'team' && u.status === 'active');
   const filteredUsers = teamFilter === 'all' ? teamUsers : teamUsers.filter(u => u.teamIds.includes(teamFilter));
-
   const allWeeks = Array.from(new Set(reports.map(r => r.weekId))).sort().reverse();
   const weeks = [weekId(), ...allWeeks.filter(w => w !== weekId())];
 
@@ -1359,9 +1099,9 @@ function FounderReports({ users, teams, reports }) {
     return { user: u, report: r };
   });
   if (statusFilter === 'submitted') rows = rows.filter(r => r.report && !r.report.isLate);
-  if (statusFilter === 'late')      rows = rows.filter(r => r.report && r.report.isLate);
-  if (statusFilter === 'blocked')   rows = rows.filter(r => r.report && r.report.hasBlockers);
-  if (statusFilter === 'missing')   rows = rows.filter(r => !r.report);
+  if (statusFilter === 'late') rows = rows.filter(r => r.report && r.report.isLate);
+  if (statusFilter === 'blocked') rows = rows.filter(r => r.report && r.report.hasBlockers);
+  if (statusFilter === 'missing') rows = rows.filter(r => !r.report);
 
   if (search.trim()) {
     const q = search.toLowerCase();
@@ -1374,33 +1114,25 @@ function FounderReports({ users, teams, reports }) {
 
   return (
     <div>
-      <div style={{ display: 'flex', gap: 12, marginBottom: 24, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-        <div style={{ minWidth: 160 }}>
-          <Field label="week">
-            <Select value={weekFilter} onChange={setWeekFilter}
-              options={weeks.map(w => ({ value: w, label: w === weekId() ? `${w} (current)` : w }))} />
-          </Field>
-        </div>
-        <div style={{ minWidth: 160 }}>
-          <Field label="team">
-            <Select value={teamFilter} onChange={setTeamFilter}
-              options={[{ value: 'all', label: 'All teams' }, ...teams.map(t => ({ value: t.id, label: t.name }))]} />
-          </Field>
-        </div>
-        <div style={{ minWidth: 160 }}>
-          <Field label="status">
-            <Select value={statusFilter} onChange={setStatusFilter} options={[
-              { value: 'all', label: 'All' },
-              { value: 'submitted', label: 'Submitted (on-time)' },
-              { value: 'late', label: 'Late' },
-              { value: 'blocked', label: 'With blockers' },
-              { value: 'missing', label: 'Missing' },
-            ]} />
-          </Field>
-        </div>
-        <div style={{ flex: 1, minWidth: 240 }}>
-          <Field label="search"><Input value={search} onChange={setSearch} placeholder="search names, content…" /></Field>
-        </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 24, alignItems: 'end' }}>
+        <Field label="week">
+          <Select value={weekFilter} onChange={setWeekFilter}
+            options={weeks.map(w => ({ value: w, label: w === weekId() ? `${w} (current)` : w }))} />
+        </Field>
+        <Field label="team">
+          <Select value={teamFilter} onChange={setTeamFilter}
+            options={[{ value: 'all', label: 'All teams' }, ...teams.map(t => ({ value: t.id, label: t.name }))]} />
+        </Field>
+        <Field label="status">
+          <Select value={statusFilter} onChange={setStatusFilter} options={[
+            { value: 'all', label: 'All' },
+            { value: 'submitted', label: 'On-time' },
+            { value: 'late', label: 'Late' },
+            { value: 'blocked', label: 'With blockers' },
+            { value: 'missing', label: 'Missing' },
+          ]} />
+        </Field>
+        <Field label="search"><Input value={search} onChange={setSearch} placeholder="search names, content…" /></Field>
       </div>
 
       <div style={{ ...mono, fontSize: 11, color: T.muted, marginBottom: 10, letterSpacing: '0.06em' }}>
@@ -1413,6 +1145,7 @@ function FounderReports({ users, teams, reports }) {
             <div style={{
               padding: '10px 14px', borderBottom: `1px solid ${T.ruleSoft}`,
               display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: T.bgAlt,
+              flexWrap: 'wrap', gap: 6,
             }}>
               <div>
                 <div style={{ ...sans, fontSize: 14, fontWeight: 500 }}>{user.name}</div>
@@ -1430,7 +1163,7 @@ function FounderReports({ users, teams, reports }) {
                 ) : <Tag color="red">NO REPORT</Tag>}
               </div>
             </div>
-            {report ? <ReportView report={report} /> : (
+            {report ? <ReportView report={report} attachments={reportAttachments[report.id] || []} /> : (
               <div style={{ padding: 18, ...mono, fontSize: 12, color: T.muted, textAlign: 'center' }}>
                 // {user.name.split(' ')[0]} did not submit for {weekFilter}
               </div>
@@ -1475,20 +1208,18 @@ function FounderBlockers({ users, reports, api, founder, showToast }) {
     <div>
       <div style={{
         display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-        borderBottom: `1px solid ${T.ink}`, paddingBottom: 12, marginBottom: 24,
+        borderBottom: `1px solid ${T.ink}`, paddingBottom: 12, marginBottom: 24, gap: 8, flexWrap: 'wrap',
       }}>
         <div>
           <div style={{ ...mono, fontSize: 11, color: T.muted, letterSpacing: '0.16em' }}>// BLOCKER BOARD</div>
           <h1 style={{ ...sans, margin: '4px 0 0', fontSize: 24, fontWeight: 500 }}>What's stopping the team</h1>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <Btn size="sm" variant={showResolved ? 'primary' : 'ghost'} onClick={() => setShowResolved(!showResolved)}>
-            {showResolved ? 'HIDING NOTHING' : 'SHOW RESOLVED'}
-          </Btn>
-        </div>
+        <Btn size="sm" variant={showResolved ? 'primary' : 'ghost'} onClick={() => setShowResolved(!showResolved)}>
+          {showResolved ? 'HIDING NOTHING' : 'SHOW RESOLVED'}
+        </Btn>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 24 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginBottom: 24 }}>
         <StatBox label="FRESH (< 4d)" value={byAge.fresh.length} color="amber" />
         <StatBox label="AGING (4–10d)" value={byAge.aging.length} color={byAge.aging.length ? 'red' : 'ink'} />
         <StatBox label="STALE (10d+)" value={byAge.stale.length} color={byAge.stale.length ? 'red' : 'ink'} />
@@ -1497,7 +1228,7 @@ function FounderBlockers({ users, reports, api, founder, showToast }) {
       {blockerReports.length === 0 ? (
         <Empty>No blockers. {showResolved ? 'No resolved blockers either.' : 'Try toggling resolved.'}</Empty>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
           {[
             { key: 'stale', title: 'STALE — escalate', color: T.red, items: byAge.stale },
             { key: 'aging', title: 'AGING — pressure', color: T.amber, items: byAge.aging },
@@ -1507,9 +1238,7 @@ function FounderBlockers({ users, reports, api, founder, showToast }) {
               <div style={{
                 ...mono, fontSize: 10, letterSpacing: '0.16em', color: col.color,
                 paddingBottom: 6, borderBottom: `1px solid ${col.color}`, marginBottom: 10,
-              }}>
-                {col.title} · {col.items.length}
-              </div>
+              }}>{col.title} · {col.items.length}</div>
               <div>
                 {col.items.length === 0 && <div style={{ ...mono, fontSize: 11, color: T.muted, padding: '8px 0' }}>// none</div>}
                 {col.items.map(r => {
@@ -1549,7 +1278,7 @@ function BlockerComposer({ user, report, onSend }) {
   );
 }
 
-function FounderMessages({ user, users, teams, messages, api, showToast }) {
+function FounderMessages({ user, users, teams, messages, messageAttachments, api, showToast }) {
   const [tab, setTab] = useState('compose');
   const [type, setType] = useState('message');
   const [toType, setToType] = useState('all');
@@ -1558,6 +1287,7 @@ function FounderMessages({ user, users, teams, messages, api, showToast }) {
   const [body, setBody] = useState('');
   const [priority, setPriority] = useState('normal');
   const [dueDate, setDueDate] = useState('');
+  const [files, setFiles] = useState([]);
   const [sending, setSending] = useState(false);
 
   const send = async () => {
@@ -1566,21 +1296,17 @@ function FounderMessages({ user, users, teams, messages, api, showToast }) {
     setSending(true);
     try {
       const m = {
-        id: uid('msg'),
-        fromUserId: user.id, fromName: user.name,
+        id: uid('msg'), fromUserId: user.id, fromName: user.name,
         toType, toIds: toType === 'all' ? [] : toIds,
         type, subject: subject.trim(), body: body.trim(), priority,
         readBy: [], dueDate: dueDate ? new Date(dueDate).getTime() : null,
       };
-      await api.createMessage(m);
-      setSubject(''); setBody(''); setToIds([]); setDueDate('');
+      await api.createMessage(m, files);
+      setSubject(''); setBody(''); setToIds([]); setDueDate(''); setFiles([]);
       showToast('ok', 'Message broadcast.');
       setTab('sent');
-    } catch (e) {
-      showToast('err', e.message || 'Send failed.');
-    } finally {
-      setSending(false);
-    }
+    } catch (e) { showToast('err', e.message || 'Send failed.'); }
+    finally { setSending(false); }
   };
 
   const sentMessages = [...messages].filter(m => m.fromUserId === user.id).sort((a, b) => b.createdAt - a.createdAt);
@@ -1589,11 +1315,11 @@ function FounderMessages({ user, users, teams, messages, api, showToast }) {
 
   return (
     <div>
-      <div style={{ display: 'flex', borderBottom: `1px solid ${T.ink}`, marginBottom: 24 }}>
+      <div style={{ display: 'flex', borderBottom: `1px solid ${T.ink}`, marginBottom: 24, flexWrap: 'wrap' }}>
         {[
           { id: 'compose', label: 'COMPOSE' },
           { id: 'sent', label: `SENT BY YOU · ${sentMessages.length}` },
-          { id: 'all', label: `ALL TRAFFIC · ${allMessages.length}` },
+          { id: 'all', label: `ALL · ${allMessages.length}` },
         ].map(t => (
           <div key={t.id} onClick={() => setTab(t.id)} style={{
             ...mono, fontSize: 11, letterSpacing: '0.12em', padding: '8px 16px', cursor: 'pointer',
@@ -1604,18 +1330,17 @@ function FounderMessages({ user, users, teams, messages, api, showToast }) {
       </div>
 
       {tab === 'compose' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 24 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 24 }}>
           <div>
             <Field label="type">
-              <div style={{ display: 'flex', gap: 6 }}>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {[{ v: 'message', l: 'MESSAGE' }, { v: 'announcement', l: 'ANNOUNCEMENT' }, { v: 'task', l: 'TASK' }].map(o => (
                   <Btn key={o.v} size="sm" variant={type === o.v ? 'primary' : 'default'} onClick={() => setType(o.v)}>{o.l}</Btn>
                 ))}
               </div>
             </Field>
-
             <Field label="recipients">
-              <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+              <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
                 {[{ v: 'all', l: 'EVERYONE' }, { v: 'team', l: 'TEAM(S)' }, { v: 'individual', l: 'INDIVIDUAL(S)' }].map(o => (
                   <Btn key={o.v} size="sm" variant={toType === o.v ? 'primary' : 'default'}
                     onClick={() => { setToType(o.v); setToIds([]); }}>{o.l}</Btn>
@@ -1637,10 +1362,8 @@ function FounderMessages({ user, users, teams, messages, api, showToast }) {
                 </div>
               )}
             </Field>
-
             <Field label="subject" required><Input value={subject} onChange={setSubject} placeholder="brief, descriptive" /></Field>
-            <Field label="body" required><Textarea value={body} onChange={setBody} rows={8} placeholder="say what you mean. say it once." /></Field>
-
+            <Field label="body" required><Textarea value={body} onChange={setBody} rows={6} placeholder="say what you mean. say it once." /></Field>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <Field label="priority">
                 <Select value={priority} onChange={setPriority} options={[
@@ -1649,20 +1372,20 @@ function FounderMessages({ user, users, teams, messages, api, showToast }) {
                   { value: 'high', label: 'High — surfaces with red tag' },
                 ]} />
               </Field>
-              {type === 'task' && (
-                <Field label="due date"><Input type="date" value={dueDate} onChange={setDueDate} /></Field>
-              )}
+              {type === 'task' && <Field label="due date"><Input type="date" value={dueDate} onChange={setDueDate} /></Field>}
             </div>
-
+            {FEATURES.attachments && (
+              <Field label="attachments">
+                <AttachmentPicker files={files} setFiles={setFiles} />
+              </Field>
+            )}
             <Btn variant="primary" size="lg" onClick={send} disabled={sending}>
               {sending ? 'SENDING…' : 'BROADCAST →'}
             </Btn>
           </div>
 
           <div>
-            <div style={{ ...mono, fontSize: 10, letterSpacing: '0.16em', color: T.muted, marginBottom: 8 }}>
-              // RECIPIENT PREVIEW
-            </div>
+            <div style={{ ...mono, fontSize: 10, letterSpacing: '0.16em', color: T.muted, marginBottom: 8 }}>// PREVIEW</div>
             <div style={{ border: `1px solid ${T.ink}`, padding: 14, background: T.bg, minHeight: 200 }}>
               <div style={{ ...mono, fontSize: 9, letterSpacing: '0.14em', color: T.muted, marginBottom: 4 }}>
                 FROM {user.name.toUpperCase()} · {new Date().toLocaleDateString()}
@@ -1683,6 +1406,11 @@ function FounderMessages({ user, users, teams, messages, api, showToast }) {
                   DUE {fmtDate(new Date(dueDate).getTime())}
                 </div>
               )}
+              {files.length > 0 && (
+                <div style={{ ...mono, fontSize: 10, color: T.muted, marginTop: 10, letterSpacing: '0.06em' }}>
+                  📎 {files.length} ATTACHMENT{files.length === 1 ? '' : 'S'}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1691,7 +1419,7 @@ function FounderMessages({ user, users, teams, messages, api, showToast }) {
       {(tab === 'sent' || tab === 'all') && (
         <div>
           {(tab === 'sent' ? sentMessages : allMessages).map(m => (
-            <SentMessageRow key={m.id} m={m} users={users} teams={teams} />
+            <SentMessageRow key={m.id} m={m} users={users} teams={teams} attachments={messageAttachments[m.id] || []} />
           ))}
           {(tab === 'sent' ? sentMessages : allMessages).length === 0 && <Empty>Nothing here.</Empty>}
         </div>
@@ -1700,37 +1428,7 @@ function FounderMessages({ user, users, teams, messages, api, showToast }) {
   );
 }
 
-function Picker({ items, selected, onChange }) {
-  const toggle = (id) => {
-    if (selected.includes(id)) onChange(selected.filter(x => x !== id));
-    else onChange([...selected, id]);
-  };
-  return (
-    <div style={{ border: `1px solid ${T.ruleSoft}`, maxHeight: 200, overflowY: 'auto' }}>
-      {items.map(i => (
-        <div key={i.id} onClick={() => toggle(i.id)} style={{
-          padding: '8px 12px', cursor: 'pointer',
-          background: selected.includes(i.id) ? T.bgAlt : 'transparent',
-          borderBottom: `1px solid ${T.ruleSoft}`,
-          display: 'flex', alignItems: 'center', gap: 10,
-        }}>
-          <div style={{
-            width: 14, height: 14, border: `1px solid ${T.ink}`,
-            background: selected.includes(i.id) ? T.ink : T.bg,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: T.bg, fontSize: 11, lineHeight: 1,
-          }}>{selected.includes(i.id) ? '✓' : ''}</div>
-          <div>
-            <div style={{ ...sans, fontSize: 13 }}>{i.label}</div>
-            <div style={{ ...mono, fontSize: 10, color: T.muted }}>{i.sub}</div>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function SentMessageRow({ m, users, teams }) {
+function SentMessageRow({ m, users, teams, attachments }) {
   const [open, setOpen] = useState(false);
   const recipients = m.toType === 'all' ? users.filter(u => u.status === 'active') :
     m.toType === 'team' ? users.filter(u => u.status === 'active' && u.teamIds.some(t => m.toIds.includes(t))) :
@@ -1741,16 +1439,19 @@ function SentMessageRow({ m, users, teams }) {
     `INDIVIDUALS: ${m.toIds.map(id => users.find(u => u.id === id)?.name).filter(Boolean).join(', ').toUpperCase()}`;
   return (
     <div style={{ borderBottom: `1px solid ${T.ruleSoft}` }}>
-      <div onClick={() => setOpen(!open)} style={{ padding: '14px 0', cursor: 'pointer', display: 'grid', gridTemplateColumns: '1fr auto', gap: 14 }}>
-        <div>
+      <div onClick={() => setOpen(!open)} style={{
+        padding: '14px 0', cursor: 'pointer', display: 'grid', gridTemplateColumns: '1fr auto', gap: 14,
+      }}>
+        <div style={{ minWidth: 0 }}>
           <div style={{ ...mono, fontSize: 9, letterSpacing: '0.14em', color: T.muted, marginBottom: 3 }}>
             {fmtDateTime(m.createdAt)} · FROM {m.fromName.toUpperCase()} · {target}
           </div>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' }}>
             <div style={{ ...sans, fontSize: 14, fontWeight: 500 }}>{m.subject}</div>
             {m.type === 'task' && <Tag color="blue">TASK</Tag>}
             {m.type === 'announcement' && <Tag color="ink">ANNOUNCEMENT</Tag>}
             {m.priority === 'high' && <Tag color="red">HIGH</Tag>}
+            {attachments.length > 0 && <span style={{ ...mono, fontSize: 10, color: T.muted }}>📎{attachments.length}</span>}
           </div>
         </div>
         <div style={{ ...mono, fontSize: 11, color: T.muted, textAlign: 'right' }}>
@@ -1763,6 +1464,7 @@ function SentMessageRow({ m, users, teams }) {
       {open && (
         <div style={{ paddingBottom: 14, ...sans, fontSize: 13, color: T.inkSoft, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
           <div style={{ borderLeft: `2px solid ${T.ruleSoft}`, paddingLeft: 12, marginBottom: 14 }}>{m.body}</div>
+          {attachments.length > 0 && <div style={{ marginBottom: 14 }}><AttachmentList attachments={attachments} dense /></div>}
           <div style={{ ...mono, fontSize: 10, color: T.muted, letterSpacing: '0.08em' }}>── READ BY ──</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
             {recipients.map(u => (
@@ -1799,7 +1501,6 @@ function FounderTeams({ users, teams, reports, api, showToast }) {
       setEditingTeam(null); setNewTeam(false);
     } catch (e) { showToast('err', e.message || 'Save failed.'); }
   };
-
   const deleteTeam = async (t) => {
     if (!confirm(`Delete team "${t.name}"? Members keep their accounts.`)) return;
     try { await api.deleteTeam(t.id); showToast('ok', 'Team deleted.'); }
@@ -1810,7 +1511,7 @@ function FounderTeams({ users, teams, reports, api, showToast }) {
     <div>
       <div style={{
         display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-        borderBottom: `1px solid ${T.ink}`, paddingBottom: 12, marginBottom: 24,
+        borderBottom: `1px solid ${T.ink}`, paddingBottom: 12, marginBottom: 24, gap: 8, flexWrap: 'wrap',
       }}>
         <div>
           <div style={{ ...mono, fontSize: 11, color: T.muted, letterSpacing: '0.16em' }}>// TEAMS</div>
@@ -1833,7 +1534,7 @@ function FounderTeams({ users, teams, reports, api, showToast }) {
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 16 }}>
         {teams.map(t => {
           const members = users.filter(u => u.teamIds.includes(t.id) && u.status === 'active');
           const founders = members.filter(m => m.role === 'founder');
@@ -1841,11 +1542,14 @@ function FounderTeams({ users, teams, reports, api, showToast }) {
           const teamReports = reports.filter(r => members.some(m => m.id === r.userId) && r.weekId === weekId());
           return (
             <div key={t.id} style={{ border: `1px solid ${T.ink}`, background: T.bg }}>
-              <div style={{ padding: '12px 14px', borderBottom: `1px solid ${T.ruleSoft}`, display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <div style={{
+                padding: '12px 14px', borderBottom: `1px solid ${T.ruleSoft}`,
+                display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, flexWrap: 'wrap',
+              }}>
                 <div>
                   <div style={{ ...sans, fontSize: 16, fontWeight: 500 }}>{t.name}</div>
                   <div style={{ ...mono, fontSize: 10, color: T.muted }}>
-                    {teamMembers.length} TEAM · {founders.length} FOUNDER · {teamReports.length}/{teamMembers.length} SUBMITTED THIS WEEK
+                    {teamMembers.length} TEAM · {founders.length} FOUNDER · {teamReports.length}/{teamMembers.length} SUBMITTED
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 4 }}>
@@ -1867,9 +1571,11 @@ function FounderTeams({ users, teams, reports, api, showToast }) {
                         <div style={{
                           width: 14, height: 14, border: `1px solid ${T.ink}`,
                           background: isMember ? T.ink : T.bg, color: T.bg,
-                          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, flexShrink: 0,
                         }}>{isMember ? '✓' : ''}</div>
-                        <div style={{ flex: 1, ...sans, fontSize: 13, color: isMember ? T.ink : T.muted }}>{u.name}</div>
+                        <div style={{ flex: 1, ...sans, fontSize: 13, color: isMember ? T.ink : T.muted, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {u.name}
+                        </div>
                         <Tag color={u.role === 'founder' ? 'blue' : 'muted'}>
                           {u.role === 'founder' ? 'FOUNDER' : (u.position || '').toUpperCase()}
                         </Tag>
@@ -1900,7 +1606,7 @@ function AdminPanel({ user, users, teams, api, showToast }) {
         </div>
       </div>
 
-      <div style={{ display: 'flex', borderBottom: `1px solid ${T.ruleSoft}`, marginBottom: 24 }}>
+      <div style={{ display: 'flex', borderBottom: `1px solid ${T.ruleSoft}`, marginBottom: 24, flexWrap: 'wrap' }}>
         {[
           { id: 'users', label: 'TEAM MEMBERS' },
           { id: 'founders', label: 'FOUNDERS' },
@@ -1941,8 +1647,7 @@ function AdminUsers({ users, teams, role, api, showToast, currentUser }) {
       if (creating) {
         await api.createUser({
           id: uid(role === 'founder' ? 'founder' : 'user'),
-          role, status: 'active', teamIds: form.teamIds || [],
-          ...form,
+          role, status: 'active', teamIds: form.teamIds || [], ...form,
         });
         showToast('ok', `Invited. ${form.name.split(' ')[0]} can now sign in with ${form.email}.`);
       } else {
@@ -1964,22 +1669,22 @@ function AdminUsers({ users, teams, role, api, showToast, currentUser }) {
     try { await api.deleteUser(u.id); showToast('ok', 'User deleted.'); }
     catch (e) {
       console.error('Delete failed:', e);
-      const detail = e?.message || e?.details || e?.hint || JSON.stringify(e);
+      const detail = e?.message || e?.details || JSON.stringify(e);
       showToast('err', `Delete failed: ${detail}`);
     }
   };
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14, gap: 8, flexWrap: 'wrap' }}>
         <div style={{ ...mono, fontSize: 12, color: T.muted, letterSpacing: '0.06em' }}>
           {list.length} {role === 'founder' ? 'FOUNDER' : 'TEAM MEMBER'}{list.length !== 1 ? 'S' : ''}
         </div>
         <Btn variant="primary" onClick={startNew}>+ ADD {role === 'founder' ? 'FOUNDER' : 'MEMBER'}</Btn>
       </div>
 
-      <div style={{ border: `1px solid ${T.ink}`, marginBottom: 18 }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', ...mono, fontSize: 12 }}>
+      <div style={{ border: `1px solid ${T.ink}`, marginBottom: 18, overflowX: 'auto' }}>
+        <table style={{ width: '100%', minWidth: 720, borderCollapse: 'collapse', ...mono, fontSize: 12 }}>
           <thead>
             <tr style={{ background: T.bgAlt, borderBottom: `1px solid ${T.ink}` }}>
               <Th w="22%">NAME</Th>
@@ -2006,7 +1711,7 @@ function AdminUsers({ users, teams, role, api, showToast, currentUser }) {
                 </Td>
                 <Td><Tag color={u.status === 'active' ? 'green' : 'muted'}>{u.status.toUpperCase()}</Tag></Td>
                 <Td>
-                  <div style={{ display: 'flex', gap: 4 }}>
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                     <Btn size="sm" onClick={() => start(u)}>EDIT</Btn>
                     <Btn size="sm" variant="ghost" onClick={() => toggleStatus(u)} disabled={u.id === currentUser?.id}>{u.status === 'active' ? 'OFF' : 'ON'}</Btn>
                     {list.length > 1 && u.id !== currentUser?.id && <Btn size="sm" variant="danger" onClick={() => remove(u)}>×</Btn>}
@@ -2023,7 +1728,7 @@ function AdminUsers({ users, teams, role, api, showToast, currentUser }) {
           <div style={{ ...mono, fontSize: 11, color: T.muted, marginBottom: 14, letterSpacing: '0.12em' }}>
             {creating ? `INVITE ${role.toUpperCase()}` : `EDIT · ${editing.name.toUpperCase()}`}
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
             <Field label="full name" required><Input value={form.name} onChange={(v) => setForm({ ...form, name: v })} /></Field>
             <Field label="email" required hint={creating ? "they'll sign in with this email + OTP" : ''}>
               <Input value={form.email} onChange={(v) => setForm({ ...form, email: v })} />
@@ -2084,18 +1789,14 @@ function AdminSelf({ user, api, showToast }) {
         // YOUR FOUNDER ACCOUNT · {user.email}
       </div>
       <Field label="name" required><Input value={name} onChange={setName} /></Field>
-      <Field label="email" required hint="changing this changes how you sign in">
-        <Input value={email} onChange={setEmail} />
-      </Field>
+      <Field label="email" required hint="changing this changes how you sign in"><Input value={email} onChange={setEmail} /></Field>
       <Field label="title"><Input value={title} onChange={setTitle} placeholder="CEO, CTO, Founder…" /></Field>
-
       <div style={{
         ...mono, fontSize: 11, color: T.muted, padding: '10px 12px', border: `1px dashed ${T.ruleSoft}`,
         marginBottom: 14, lineHeight: 1.5,
       }}>
-        // PASSWORDS REMOVED. Authentication is email+OTP for everyone — managed by Supabase Auth, no passwords to leak.
+        // PASSWORDS REMOVED. Auth is email+OTP — no passwords to leak.
       </div>
-
       <Btn variant="primary" size="lg" onClick={save}>SAVE CHANGES</Btn>
     </div>
   );

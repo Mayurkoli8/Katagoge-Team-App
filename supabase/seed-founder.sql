@@ -10,7 +10,8 @@
 
 insert into public.profiles (id, email, name, role, title, status, team_ids)
 values
-  ('founder_001', 'kolimohit9595@gmail.com',     'Mayur Koli',     'founder', 'COO', 'active', '{}')
+  ('founder_001', 'YOUR_EMAIL@example.com',     'YOUR NAME',     'founder', 'CEO', 'active', '{}'),
+  ('founder_002', 'COFOUNDER_EMAIL@example.com', 'COFOUNDER NAME', 'founder', 'CTO', 'active', '{}')
 on conflict (id) do update set
   email   = excluded.email,
   name    = excluded.name,

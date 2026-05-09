@@ -1,26 +1,61 @@
+/* ============================================================
+   KATAGOGE — global styles
+   All colors come from CSS variables set by lib/theme.js
+   ============================================================ */
+
+:root {
+  --bg: #F4F2E9;
+  --bgAlt: #EBE8DB;
+  --ink: #141414;
+  --inkSoft: #3A3A35;
+  --muted: #7A7972;
+  --ruleSoft: #C8C4B5;
+  --red: #A8321B;
+  --redSoft: #F2D9CF;
+  --green: #2F5D3A;
+  --greenSoft: #D4DCC9;
+  --amber: #9C6A14;
+  --amberSoft: #EFE0B8;
+  --blue: #1F4368;
+  --blueSoft: #D2DCE6;
+  --shadow: rgba(0,0,0,0.06);
+}
+
 html, body, #root {
   margin: 0;
   padding: 0;
-  background: #F4F2E9;
-  color: #141414;
+  background: var(--bg);
+  color: var(--ink);
   font-family: 'IBM Plex Sans', 'Helvetica Neue', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   min-height: 100vh;
+  overflow-x: hidden;
 }
 
 * { box-sizing: border-box; }
 
 *::-webkit-scrollbar { width: 10px; height: 10px; }
-*::-webkit-scrollbar-track { background: #EBE8DB; }
-*::-webkit-scrollbar-thumb { background: #7A7972; border: 2px solid #EBE8DB; }
-*::selection { background: #141414; color: #F4F2E9; }
+*::-webkit-scrollbar-track { background: var(--bgAlt); }
+*::-webkit-scrollbar-thumb { background: var(--muted); border: 2px solid var(--bgAlt); }
+*::selection { background: var(--ink); color: var(--bg); }
 
-input, textarea, select, button { font-family: inherit; }
+input, textarea, select, button { font-family: inherit; color: inherit; }
+input::placeholder, textarea::placeholder { color: var(--muted); opacity: 0.8; }
+button { cursor: pointer; }
 
-input::placeholder, textarea::placeholder {
-  color: #7A7972;
-  opacity: 0.8;
+input, textarea, select { background: var(--bg); color: var(--ink); }
+
+* { -webkit-tap-highlight-color: transparent; }
+
+/* Prevent iOS zoom on input focus */
+@media (max-width: 768px) {
+  input, textarea, select { font-size: 16px !important; }
 }
 
-button { cursor: pointer; }
+.desktop-only { display: revert; }
+.mobile-only { display: none !important; }
+@media (max-width: 768px) {
+  .desktop-only { display: none !important; }
+  .mobile-only { display: revert !important; }
+}
