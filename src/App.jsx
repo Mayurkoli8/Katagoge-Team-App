@@ -232,9 +232,26 @@ export default function App() {
 }
 
 function CompanyLogo({ size = 'md' }) {
-  const px = size === 'lg' ? 36 : size === 'sm' ? 14 : 18;
-  if (COMPANY.logoUrl) return <img src={COMPANY.logoUrl} alt={COMPANY.name} style={{ height: px, width: 'auto', objectFit: 'contain' }} />;
-  return <div style={{ ...mono, fontSize: px, letterSpacing: '0.05em', fontWeight: 600 }}>{COMPANY.textLogo}</div>;
+  const px = size === 'lg' ? 36 : size === 'sm' ? 18 : 22;
+  // Text size scales slightly smaller than the icon — wordmark + icon read better
+  // when the wordmark height ≈ 80% of icon height. Tweak per logo if needed.
+  const textPx = size === 'lg' ? 30 : size === 'sm' ? 14 : 17;
+  return (
+    <div style={{
+      display: 'inline-flex', alignItems: 'center', gap: size === 'sm' ? 6 : 8,
+      lineHeight: 1, color: T.ink,
+    }}>
+      {COMPANY.iconUrl && (
+        <img src={COMPANY.iconUrl} alt=""
+             style={{ height: px, width: px, objectFit: 'contain', flexShrink: 0 }} />
+      )}
+      <span style={{
+        ...mono, fontSize: textPx, letterSpacing: '0.05em', fontWeight: 600, color: T.ink,
+      }}>
+        {COMPANY.textLogo}
+      </span>
+    </div>
+  );
 }
 
 function ThemeSwitcher({ theme, setTheme }) {
