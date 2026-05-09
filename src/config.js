@@ -19,7 +19,7 @@ export const COMPANY = {
   name: 'Katagoge',                     // display name
   shortName: 'KGG',                     // 3-letter abbreviation for tight spots
   tagline: 'Weekly accountability · Internal comms',
-  logoUrl: null,                        // URL to logo image, or null to show text
+  logoUrl: 'images/katagoge_logo.png',                        // URL to logo image, or null to show text
   /** falls back to text logo if logoUrl is null */
   textLogo: 'KATAGOGE',
 
