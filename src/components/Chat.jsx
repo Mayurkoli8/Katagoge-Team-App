@@ -58,15 +58,37 @@ export function ChatPanel({ user, users, isFounder, showToast }) {
         c.id === msg.chatId ? { ...c, lastMessageAt: msg.createdAt } : c
       ).sort((a, b) => (b.lastMessageAt || 0) - (a.lastMessageAt || 0)));
 
-      // If the new message has attachments, we'll fetch them lazily when shown.
+      // If the new message has attachments, fetch them. There's a race here:
+      // the sender uploads attachments AFTER inserting the message, so the
+      // recipient may receive the message before any attachment rows exist.
+      // We retry a few times with backoff. The attachments realtime
+      // subscription (below) is the main path; this is a backup.
       if (msg.hasAttachments) {
-        try {
-          const list = await attach.listForChatMessages([msg.id]);
-          setAttachments(prev => ({ ...prev, [msg.id]: list }));
-        } catch (e) {}
+        const tries = [200, 800, 2000];
+        for (const delay of tries) {
+          await new Promise(r => setTimeout(r, delay));
+          try {
+            const list = await attach.listForChatMessages([msg.id]);
+            if (list.length > 0) {
+              setAttachments(prev => ({ ...prev, [msg.id]: list }));
+              break;
+            }
+          } catch (e) {}
+        }
       }
     });
-    return unsub;
+
+    // Realtime: also subscribe to attachment INSERTs. When a chat-message
+    // attachment arrives, append it to the local cache for that message.
+    const attachUnsub = attach.subscribeToChatAttachments((att) => {
+      setAttachments(prev => {
+        const existing = prev[att.chatMessageId] || [];
+        if (existing.find(a => a.id === att.id)) return prev;
+        return { ...prev, [att.chatMessageId]: [...existing, att] };
+      });
+    });
+
+    return () => { unsub(); attachUnsub(); };
   }, []);
 
   // Auto-load messages for the active chat
