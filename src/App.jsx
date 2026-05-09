@@ -1812,7 +1812,7 @@ function AdminSelf({ user, api, showToast }) {
         ...mono, fontSize: 11, color: T.muted, padding: '10px 12px', border: `1px dashed ${T.ruleSoft}`,
         marginBottom: 14, lineHeight: 1.5,
       }}>
-        // PASSWORDS REMOVED. Auth is email+OTP — no passwords to leak.
+        // PASSWORDLESS  SIGN-IN. Auth is email+OTP — no passwords to leak.
       </div>
       <Btn variant="primary" size="lg" onClick={save}>SAVE CHANGES</Btn>
     </div>
