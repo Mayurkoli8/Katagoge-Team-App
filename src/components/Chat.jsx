@@ -58,15 +58,37 @@ export function ChatPanel({ user, users, isFounder, showToast }) {
         c.id === msg.chatId ? { ...c, lastMessageAt: msg.createdAt } : c
       ).sort((a, b) => (b.lastMessageAt || 0) - (a.lastMessageAt || 0)));
 
-      // If the new message has attachments, we'll fetch them lazily when shown.
+      // If the new message has attachments, fetch them. There's a race here:
+      // the sender uploads attachments AFTER inserting the message, so the
+      // recipient may receive the message before any attachment rows exist.
+      // We retry a few times with backoff. The attachments realtime
+      // subscription (below) is the main path; this is a backup.
       if (msg.hasAttachments) {
-        try {
-          const list = await attach.listForChatMessages([msg.id]);
-          setAttachments(prev => ({ ...prev, [msg.id]: list }));
-        } catch (e) {}
+        const tries = [200, 800, 2000];
+        for (const delay of tries) {
+          await new Promise(r => setTimeout(r, delay));
+          try {
+            const list = await attach.listForChatMessages([msg.id]);
+            if (list.length > 0) {
+              setAttachments(prev => ({ ...prev, [msg.id]: list }));
+              break;
+            }
+          } catch (e) {}
+        }
       }
     });
-    return unsub;
+
+    // Realtime: also subscribe to attachment INSERTs. When a chat-message
+    // attachment arrives, append it to the local cache for that message.
+    const attachUnsub = attach.subscribeToChatAttachments((att) => {
+      setAttachments(prev => {
+        const existing = prev[att.chatMessageId] || [];
+        if (existing.find(a => a.id === att.id)) return prev;
+        return { ...prev, [att.chatMessageId]: [...existing, att] };
+      });
+    });
+
+    return () => { unsub(); attachUnsub(); };
   }, []);
 
   // Auto-load messages for the active chat
@@ -506,13 +528,19 @@ function ChatPane({
 
 function ChatMessageRow({ m, sender, isMe, attachments, canDelete, onDelete }) {
   const [hover, setHover] = useState(false);
+  // Only show hover highlight when there's content. Prevents empty rows
+  // (e.g. message arrived but its attachment hasn't synced yet) from
+  // looking visually broken with a stray highlighted band.
+  const hasContent = !!(m.body && m.body.trim()) || attachments.length > 0;
+  const showHover = hover && hasContent;
   return (
     <div onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
       style={{
         display: 'flex', flexDirection: 'column', gap: 2,
-        padding: '4px 8px', borderRadius: 0,
-        background: hover ? T.bgAlt : 'transparent',
+        padding: '4px 8px',
+        background: showHover ? T.bgAlt : 'transparent',
         position: 'relative',
+        transition: 'background 80ms linear',
       }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
         <span style={{ ...sans, fontSize: 12, fontWeight: 600, color: isMe ? T.blue : T.ink }}>
@@ -521,20 +549,26 @@ function ChatMessageRow({ m, sender, isMe, attachments, canDelete, onDelete }) {
         <span style={{ ...mono, fontSize: 9, color: T.muted, letterSpacing: '0.06em' }}>
           {fmtTime(m.createdAt)}{m.editedAt ? ' · edited' : ''}
         </span>
-        {canDelete && hover && (
+        {canDelete && showHover && (
           <span onClick={onDelete} style={{
             position: 'absolute', top: 4, right: 4, ...mono, fontSize: 10,
             color: T.red, cursor: 'pointer', padding: '0 4px',
           }}>✕</span>
         )}
       </div>
-      {m.body && (
+      {m.body && m.body.trim() && (
         <div style={{
           ...sans, fontSize: 13, lineHeight: 1.5, color: T.ink,
           whiteSpace: 'pre-wrap', wordBreak: 'break-word',
         }}>{m.body}</div>
       )}
       {attachments.length > 0 && <AttachmentList attachments={attachments} dense />}
+      {/* If we know an attachment is coming but it hasn't synced yet, show a placeholder */}
+      {!hasContent && m.hasAttachments && (
+        <div style={{ ...mono, fontSize: 11, color: T.muted, padding: '6px 0' }}>
+          📎 attachment loading…
+        </div>
+      )}
     </div>
   );
 }

@@ -151,6 +151,27 @@ export const attach = {
     const { error } = await supabase.from('attachments').delete().eq('id', attachment.id);
     if (error) throw error;
   },
+
+  /**
+   * Subscribe to chat-message attachment INSERTs so the recipient's UI
+   * picks up files that are uploaded shortly after the message itself.
+   * Returns an unsubscribe function.
+   */
+  subscribeToChatAttachments(cb) {
+    const channel = supabase
+      .channel('attachments_chat_inserts')
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'attachments' },
+        (payload) => {
+          // Only chat-message attachments — ignore report/message uploads
+          if (payload.new?.chat_message_id) {
+            cb(attachmentFromRow(payload.new));
+          }
+        }
+      )
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  },
 };
 
 /* ============================================================
