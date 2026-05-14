@@ -71,6 +71,9 @@ When someone signs in for the first time, a Postgres trigger links their auth ac
 - Live message preview side-by-side while composing
 - One-click "message this user" from any blocker (pre-fills with the blocker quoted)
 
+## How it works 
+<iframe src="https://scribehow.com/embed/How_To_Navigate_And_Verify_Your_User_Account_Settings__Wd3vICFSQfW8mEm3F98Few" width="800" height="679" allow="fullscreen" style="aspect-ratio: 1 / 1; border: 0; min-height: 480px"></iframe>
+
 ## License
 
 Internal tool. Yours to do with as you like.
